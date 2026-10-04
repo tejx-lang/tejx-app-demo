@@ -1,0 +1,102 @@
+// Nomad Hub user state handlers
+import { AppHttpResponse, AppRouteContext } from "../../../server/index.tx";
+import { JsonObject, objectOf, parseJson } from "../../helpers/json.tx";
+import { jsonSuccess, jsonError, jsonNotFound } from "../../core/responses.tx";
+import { getAppState, AppState } from "../../core/state.tx";
+import { nextEntityId } from "../../core/ids.tx";
+import { recordAppEvent } from "../../core/store.tx";
+import { NomadNote, NomadBookmark } from "./model.tx";
+import { now } from "std:time";
+
+export function handleGetNomadState(ctx: AppRouteContext): AppHttpResponse {
+    let state: AppState = getAppState();
+    let notes = state.notes.all();
+    let notesList: any[] = [];
+    for (let i = 0; i < notes.length(); i++) {
+        notesList.push(notes[i].toJSON());
+    }
+
+    let bookmarks = state.bookmarks.all();
+    let bmList: any[] = [];
+    for (let i = 0; i < bookmarks.length(); i++) {
+        bmList.push(bookmarks[i].toJSON());
+    }
+
+    let out: JsonObject = objectOf({});
+    out.setBool("success", true);
+    out.setArray("notes", notesList);
+    out.setArray("bookmarks", bmList);
+    return jsonSuccess("Nomad Hub state retrieved", out);
+}
+
+export function handleCreateNomadNote(ctx: AppRouteContext): AppHttpResponse {
+    try {
+        let bodyRaw = ctx.request.body;
+        if (bodyRaw.trim() == "") {
+            return jsonError("Request body required", 400);
+        }
+        let parsed: any = parseJson(bodyRaw);
+        let title: string = String(parsed["title"] != None ? parsed["title"] : "Quick Note");
+        let content: string = String(parsed["content"] != None ? parsed["content"] : "");
+        let category: string = String(parsed["category"] != None ? parsed["category"] : "General");
+
+        let state: AppState = getAppState();
+        let id: string = nextEntityId("not", state.notes.ids);
+        let note: NomadNote = new NomadNote(id, title, content, category, now());
+        state.notes.add(id, note);
+
+        recordAppEvent("note_created", "NomadNote", id);
+
+        let out: JsonObject = objectOf({});
+        out.setObject("note", note.toJSON());
+        return jsonSuccess("Note saved", out);
+    } catch (e) {
+        return jsonError("Failed to save note: " + String(e), 400);
+    }
+}
+
+export function handleDeleteNomadNote(ctx: AppRouteContext): AppHttpResponse {
+    let id: string = ctx.param("noteId");
+    let state: AppState = getAppState();
+    if (!state.notes.remove(id)) {
+        return jsonNotFound("Note not found: " + id);
+    }
+    recordAppEvent("note_deleted", "NomadNote", id);
+    return jsonSuccess("Note deleted");
+}
+
+export function handleCreateNomadBookmark(ctx: AppRouteContext): AppHttpResponse {
+    try {
+        let bodyRaw = ctx.request.body;
+        if (bodyRaw.trim() == "") {
+            return jsonError("Request body required", 400);
+        }
+        let parsed: any = parseJson(bodyRaw);
+        let type: string = String(parsed["type"] != None ? parsed["type"] : "general");
+        let title: string = String(parsed["title"] != None ? parsed["title"] : "Bookmark");
+        let data: string = String(parsed["data"] != None ? parsed["data"] : "{}");
+
+        let state: AppState = getAppState();
+        let id: string = nextEntityId("bm", state.bookmarks.ids);
+        let bm: NomadBookmark = new NomadBookmark(id, type, title, data, now());
+        state.bookmarks.add(id, bm);
+
+        recordAppEvent("bookmark_created", "NomadBookmark", id);
+
+        let out: JsonObject = objectOf({});
+        out.setObject("bookmark", bm.toJSON());
+        return jsonSuccess("Bookmark saved", out);
+    } catch (e) {
+        return jsonError("Failed to save bookmark: " + String(e), 400);
+    }
+}
+
+export function handleDeleteNomadBookmark(ctx: AppRouteContext): AppHttpResponse {
+    let id: string = ctx.param("bookmarkId");
+    let state: AppState = getAppState();
+    if (!state.bookmarks.remove(id)) {
+        return jsonNotFound("Bookmark not found: " + id);
+    }
+    recordAppEvent("bookmark_deleted", "NomadBookmark", id);
+    return jsonSuccess("Bookmark deleted");
+}

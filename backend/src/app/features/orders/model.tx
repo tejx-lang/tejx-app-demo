@@ -1,0 +1,31 @@
+// Order domain model
+import { JsonObject, objectOf } from "../../helpers/json.tx";
+
+export class AppOrder {
+    id: string;
+    userId: string;
+    productIds: string[];
+    total: float;
+    status: string;
+    createdAt: int64;
+
+    constructor(id: string, userId: string, productIds: string[], total: float, status: string, createdAt: int64) {
+        this.id = id;
+        this.userId = userId;
+        this.productIds = productIds;
+        this.total = total;
+        this.status = status;
+        this.createdAt = createdAt;
+    }
+
+    toJSON(): any {
+        return {
+            "id": this.id,
+            "userId": this.userId,
+            "productIds": this.productIds,
+            "total": this.total,
+            "status": this.status,
+            "createdAt": this.createdAt
+        };
+    }
+}

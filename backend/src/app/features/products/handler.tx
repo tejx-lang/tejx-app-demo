@@ -1,0 +1,100 @@
+// Product CRUD route handlers
+import { AppHttpResponse, AppRouteContext } from "../../../server/index.tx";
+import { JsonObject, objectOf, parseJson } from "../../helpers/json.tx";
+import { jsonSuccess, jsonError, jsonNotFound } from "../../core/responses.tx";
+import { getAppState, AppState } from "../../core/state.tx";
+import { nextEntityId } from "../../core/ids.tx";
+import { recordAppEvent } from "../../core/store.tx";
+import { AppProduct } from "./model.tx";
+import { now } from "std:time";
+
+export function handleListProducts(ctx: AppRouteContext): AppHttpResponse {
+    let state: AppState = getAppState();
+    let products = state.products.all();
+    let list: any[] = [];
+    for (let i = 0; i < products.length(); i++) {
+        list.push(products[i].toJSON());
+    }
+
+    let out: JsonObject = objectOf({});
+    out.setBool("success", true);
+    out.setInt("count", list.length());
+    out.setArray("products", list);
+    return jsonSuccess("Products retrieved", out);
+}
+
+export function handleGetProduct(ctx: AppRouteContext): AppHttpResponse {
+    let id: string = ctx.param("productId");
+    let state: AppState = getAppState();
+    let prod = state.products.get(id);
+    if (prod == None) {
+        return jsonNotFound("Product not found: " + id);
+    }
+    let p: AppProduct = prod as AppProduct;
+    let out: JsonObject = objectOf({});
+    out.setObject("product", p.toJSON());
+    return jsonSuccess("Product found", out);
+}
+
+export function handleCreateProduct(ctx: AppRouteContext): AppHttpResponse {
+    try {
+        let bodyRaw = ctx.request.body;
+        if (bodyRaw.trim() == "") {
+            return jsonError("Request body required", 400);
+        }
+        let parsed: any = parseJson(bodyRaw);
+        let name: string = String(parsed["name"] != None ? parsed["name"] : "New Product");
+        let price: float = parsed["price"] != None ? Number.Float(parsed["price"]) : 0.0;
+        let category: string = String(parsed["category"] != None ? parsed["category"] : "General");
+        let stock: int = parsed["stock"] != None ? Number.Int(parsed["stock"]) : 10;
+
+        let state: AppState = getAppState();
+        let id: string = nextEntityId("prd", state.products.ids);
+        let product: AppProduct = new AppProduct(id, name, price, category, stock, now());
+        state.products.add(id, product);
+
+        recordAppEvent("product_created", "Product", id);
+
+        let out: JsonObject = objectOf({});
+        out.setObject("product", product.toJSON());
+        return jsonSuccess("Product created successfully", out);
+    } catch (e) {
+        return jsonError("Invalid JSON payload: " + String(e), 400);
+    }
+}
+
+export function handleUpdateProduct(ctx: AppRouteContext): AppHttpResponse {
+    try {
+        let id: string = ctx.param("productId");
+        let state: AppState = getAppState();
+        let prodVal = state.products.get(id);
+        if (prodVal == None) {
+            return jsonNotFound("Product not found: " + id);
+        }
+        let prod: AppProduct = prodVal as AppProduct;
+        let parsed: any = parseJson(ctx.request.body);
+
+        if (parsed["name"] != None) prod.name = String(parsed["name"]);
+        if (parsed["price"] != None) prod.price = Number.Float(parsed["price"]);
+        if (parsed["category"] != None) prod.category = String(parsed["category"]);
+        if (parsed["stock"] != None) prod.stock = Number.Int(parsed["stock"]);
+
+        recordAppEvent("product_updated", "Product", id);
+
+        let out: JsonObject = objectOf({});
+        out.setObject("product", prod.toJSON());
+        return jsonSuccess("Product updated successfully", out);
+    } catch (e) {
+        return jsonError("Failed to update product: " + String(e), 400);
+    }
+}
+
+export function handleDeleteProduct(ctx: AppRouteContext): AppHttpResponse {
+    let id: string = ctx.param("productId");
+    let state: AppState = getAppState();
+    if (!state.products.remove(id)) {
+        return jsonNotFound("Product not found: " + id);
+    }
+    recordAppEvent("product_deleted", "Product", id);
+    return jsonSuccess("Product deleted successfully");
+}

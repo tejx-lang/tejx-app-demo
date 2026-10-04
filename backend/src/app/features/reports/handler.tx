@@ -1,0 +1,38 @@
+// Reports and Analytics summary handler
+import { AppHttpResponse, AppRouteContext } from "../../../server/index.tx";
+import { JsonObject, objectOf } from "../../helpers/json.tx";
+import { jsonSuccess } from "../../core/responses.tx";
+import { getAppState, AppState } from "../../core/state.tx";
+import { getStorageMode } from "../../core/persistence.tx";
+
+export function handleGetSummaryReport(ctx: AppRouteContext): AppHttpResponse {
+    let state: AppState = getAppState();
+    let orders = state.orders.all();
+    let revenue: float = 0.0;
+    let completedOrders: int = 0;
+    let pendingOrders: int = 0;
+
+    for (let i = 0; i < orders.length(); i++) {
+        revenue = revenue + orders[i].total;
+        if (orders[i].status == "completed") {
+            completedOrders = completedOrders + 1;
+        } else {
+            pendingOrders = pendingOrders + 1;
+        }
+    }
+
+    let out: JsonObject = objectOf({});
+    out.setBool("success", true);
+    out.setInt("totalUsers", state.users.ids.length());
+    out.setInt("totalProducts", state.products.ids.length());
+    out.setInt("totalOrders", state.orders.ids.length());
+    out.setInt("completedOrders", completedOrders);
+    out.setInt("pendingOrders", pendingOrders);
+    out.setFloat("totalRevenue", revenue);
+    out.setInt("totalEvents", state.events.ids.length());
+    out.setInt("totalNotes", state.notes.ids.length());
+    out.setInt("totalBookmarks", state.bookmarks.ids.length());
+    out.setString("storageMode", getStorageMode());
+
+    return jsonSuccess("Summary report calculated", out);
+}

@@ -1,0 +1,106 @@
+// Store and persistence coordinator
+import { now } from "std:time";
+import { MongoDatabase } from "../../../../mongo-sdk/src/index.tx";
+import { MongoJsonObject, objectOf } from "../../../../mongo-sdk/src/json.tx";
+import { AppState, getAppState } from "./state.tx";
+import { nextEntityId } from "./ids.tx";
+import { AppUser } from "../features/users/model.tx";
+import { AppProduct } from "../features/products/model.tx";
+import { AppOrder } from "../features/orders/model.tx";
+import { AppEvent } from "../features/events/model.tx";
+import { NomadNote, NomadBookmark } from "../features/nomad/model.tx";
+
+export function recordAppEvent(action: string, entity: string, entityId: string): void {
+    let state: AppState = getAppState();
+    let eventId: string = nextEntityId("ev", state.events.ids);
+    let event: AppEvent = new AppEvent(eventId, action, entity, entityId, now());
+    state.events.add(eventId, event);
+
+    if (state.client != None) {
+        try {
+            let db: MongoDatabase = state.client as MongoDatabase;
+            let doc: MongoJsonObject = new MongoJsonObject({});
+            doc.setString("id", event.id);
+            doc.setString("action", event.action);
+            doc.setString("entity", event.entity);
+            doc.setString("entityId", event.entityId);
+            doc.setInt("timestamp", event.timestamp as int);
+            db.insertOne("events", doc);
+        } catch (e) {
+            // In-memory record is already preserved
+        }
+    }
+}
+
+export function seedInitialData(state: AppState): void {
+    let t: int64 = now();
+
+    // 1. Initial Users
+    let u1 = new AppUser("usr-1", "Elena Vance", "elena@digitalnomad.io", "Lead Explorer", t);
+    let u2 = new AppUser("usr-2", "Kai Chen", "kai@remote-dev.co", "Cloud Architect", t);
+    let u3 = new AppUser("usr-3", "Sophia Miller", "sophia@traveler.org", "Content Creator", t);
+    state.users.add(u1.id, u1);
+    state.users.add(u2.id, u2);
+    state.users.add(u3.id, u3);
+
+    // 2. Initial Products (Nomad Gear & Utilities)
+    let p1 = new AppProduct("prd-1", "Starlink Mini Roam Kit", 599.00, "Connectivity", 42, t);
+    let p2 = new AppProduct("prd-2", "Noise-Cancelling Nomad Headphones", 249.50, "Audio", 85, t);
+    let p3 = new AppProduct("prd-3", "Ergonomic Portable Laptop Stand", 65.00, "Workstation", 120, t);
+    let p4 = new AppProduct("prd-4", "100W GaN Travel Fast Charger", 79.99, "Power", 200, t);
+    let p5 = new AppProduct("prd-5", "Passport RFID Anti-Theft Sling Bag", 45.00, "Luggage", 95, t);
+    state.products.add(p1.id, p1);
+    state.products.add(p2.id, p2);
+    state.products.add(p3.id, p3);
+    state.products.add(p4.id, p4);
+    state.products.add(p5.id, p5);
+
+    // 3. Initial Orders
+    let o1 = new AppOrder("ord-1", "usr-1", ["prd-1", "prd-3"], 664.00, "completed", t);
+    let o2 = new AppOrder("ord-2", "usr-2", ["prd-2", "prd-4"], 329.49, "pending", t);
+    state.orders.add(o1.id, o1);
+    state.orders.add(o2.id, o2);
+
+    // 4. Initial Nomad Notes
+    let n1 = new NomadNote(
+        "note-1",
+        "Chiang Mai Coworking Spaces",
+        "Punspace Nimman & Yellow Coworking have 300Mbps fiber and 24/7 access.",
+        "Travel",
+        t
+    );
+    let n2 = new NomadNote(
+        "note-2",
+        "Portugal D8 Digital Nomad Visa",
+        "Requires proof of remote income (~3,280 EUR/mo) and NIF registration.",
+        "Visa",
+        t
+    );
+    let n3 = new NomadNote(
+        "note-3",
+        "Tokyo Coffee & WiFi Cafes",
+        "Fuglen Shibuya and Blue Bottle Roppongi are great for morning deep work.",
+        "Productivity",
+        t
+    );
+    state.notes.add(n1.id, n1);
+    state.notes.add(n2.id, n2);
+    state.notes.add(n3.id, n3);
+
+    // 5. Initial Bookmarks
+    let b1 = new NomadBookmark("bm-1", "country", "Japan", "{\"code\":\"JP\",\"capital\":\"Tokyo\"}", t);
+    let b2 = new NomadBookmark("bm-2", "crypto", "Bitcoin (BTC)", "{\"symbol\":\"btc\",\"target\":75000}", t);
+    let b3 = new NomadBookmark("bm-3", "country", "Switzerland", "{\"code\":\"CH\",\"capital\":\"Bern\"}", t);
+    state.bookmarks.add(b1.id, b1);
+    state.bookmarks.add(b2.id, b2);
+    state.bookmarks.add(b3.id, b3);
+
+    // Initial audit log
+    recordAppEvent("system_boot", "System", "core-init");
+}
+
+export function loadAppStateFromMongoOrSeed(client: Optional<MongoDatabase>): AppState {
+    let state: AppState = new AppState(client);
+    seedInitialData(state);
+    return state;
+}

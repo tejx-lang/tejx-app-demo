@@ -1,0 +1,174 @@
+import { primeMongoConnection, MongoClient } from "./client.tx";
+import { MongoConnectionConfig, cloneConnectionConfig, parseMongoUri } from "./config.tx";
+import { MongoJsonObject } from "./json.tx";
+
+export class MongoConnection {
+    uri: string;
+    host: string;
+    port: int;
+    database: string;
+    username: string;
+    password: string;
+    authDatabase: string;
+    replicaSet: string;
+
+    constructor(
+        uri: string,
+        host: string,
+        port: int,
+        database: string,
+        username: string,
+        password: string,
+        authDatabase: string,
+        replicaSet: string
+    ) {
+        this.uri = uri;
+        this.host = host;
+        this.port = port;
+        this.database = database;
+        this.username = username;
+        this.password = password;
+        this.authDatabase = authDatabase;
+        this.replicaSet = replicaSet;
+    }
+}
+
+export class MongoDatabase extends MongoClient {
+    constructor(connection: MongoConnection) {
+        super(new MongoConnectionConfig(
+            connection.uri,
+            connection.host,
+            connection.port,
+            connection.database,
+            connection.username,
+            connection.password,
+            connection.authDatabase,
+            connection.replicaSet
+        ));
+    }
+
+    databaseName(): string {
+        return super.databaseName();
+    }
+
+    address(): string {
+        return super.address();
+    }
+
+    ping(): void {
+        super.ping();
+    }
+
+    find(collection: string, filter: MongoJsonObject): MongoJsonObject[] {
+        return super.find(collection, filter);
+    }
+
+    findOne(collection: string, filter: MongoJsonObject): Optional<MongoJsonObject> {
+        return super.findOne(collection, filter);
+    }
+
+    insertOne(collection: string, document: MongoJsonObject): MongoJsonObject {
+        return super.insertOne(collection, document);
+    }
+
+    updateOne(collection: string, filter: MongoJsonObject, setFields: MongoJsonObject): MongoJsonObject {
+        return super.updateOne(collection, filter, setFields);
+    }
+
+    upsertOne(collection: string, filter: MongoJsonObject, setFields: MongoJsonObject): MongoJsonObject {
+        return super.upsertOne(collection, filter, setFields);
+    }
+
+    deleteOne(collection: string, filter: MongoJsonObject): MongoJsonObject {
+        return super.deleteOne(collection, filter);
+    }
+
+    close(): void {
+        super.close();
+    }
+}
+
+function toInternalConnection(connection: MongoConnection): MongoConnectionConfig {
+    return new MongoConnectionConfig(
+        connection.uri,
+        connection.host,
+        connection.port,
+        connection.database,
+        connection.username,
+        connection.password,
+        connection.authDatabase,
+        connection.replicaSet
+    );
+}
+
+export function createMongoConnection(
+    uri: string = "",
+    host: string = "127.0.0.1",
+    port: int = 27017,
+    database: string = "",
+    username: string = "",
+    password: string = "",
+    authDatabase: string = "",
+    replicaSet: string = ""
+): MongoConnection {
+    return new MongoConnection(
+        uri,
+        host,
+        port,
+        database,
+        username,
+        password,
+        authDatabase,
+        replicaSet
+    );
+}
+
+export function copyMongoConnection(connection: MongoConnection): MongoConnection {
+    return createMongoConnection(
+        connection.uri,
+        connection.host,
+        connection.port,
+        connection.database,
+        connection.username,
+        connection.password,
+        connection.authDatabase,
+        connection.replicaSet
+    );
+}
+
+export function connectMongo(connection: MongoConnection): MongoDatabase {
+    return new MongoDatabase(connection);
+}
+
+export function warmMongoConnection(connection: MongoConnection): void {
+    let internal: MongoConnectionConfig = cloneConnectionConfig(toInternalConnection(connection));
+    primeMongoConnection(internal);
+}
+
+export function openMongo(connection: MongoConnection): MongoDatabase {
+    return connectMongo(connection);
+}
+
+export function createMongoConnectionFromUri(uri: string): MongoConnection {
+    let cfg: MongoConnectionConfig = parseMongoUri(uri);
+    return new MongoConnection(
+        cfg.uri,
+        cfg.host,
+        cfg.port,
+        cfg.database,
+        cfg.username,
+        cfg.password,
+        cfg.authDatabase,
+        cfg.replicaSet
+    );
+}
+
+export function openMongoUrl(uri: string): MongoDatabase {
+    return connectMongo(createMongoConnectionFromUri(uri));
+}
+
+export function parseMongoConnectionString(uri: string): MongoConnectionConfig {
+    return parseMongoUri(uri);
+}
+
+

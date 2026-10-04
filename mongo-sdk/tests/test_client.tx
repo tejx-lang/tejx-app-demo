@@ -1,0 +1,20 @@
+// Client test probe for mongo-sdk package
+import { createMongoConnection, connectMongo, MongoDatabase } from "../src/index.tx";
+import { MongoJsonObject, objectOf } from "../src/json.tx";
+
+function main(): void {
+    print("=== Testing TejX Mongo SDK Client Initialization ===");
+
+    let conn = createMongoConnection("mongodb://localhost:27017", "127.0.0.1", 27017, "tejx_demo_db");
+    print("Configured host: ", conn.host, ":", conn.port);
+    print("Configured database: ", conn.database);
+
+    let db: MongoDatabase = connectMongo(conn);
+    print("MongoDatabase instance created successfully for: ", db.databaseName());
+
+    let doc: MongoJsonObject = objectOf({});
+    doc.setString("test", "client_init");
+    print("Client driver ready for wire-protocol communications.");
+
+    print("=== Mongo SDK Client Test Completed! ===");
+}

@@ -1,0 +1,89 @@
+// Application global state container
+import { Map } from "std:collections";
+import { MongoDatabase } from "../../../../mongo-sdk/src/index.tx";
+import { AppUser } from "../features/users/model.tx";
+import { AppProduct } from "../features/products/model.tx";
+import { AppOrder } from "../features/orders/model.tx";
+import { AppEvent } from "../features/events/model.tx";
+import { NomadNote, NomadBookmark } from "../features/nomad/model.tx";
+
+export class EntityCollection<T> {
+    items: Map<string, T>;
+    ids: string[];
+
+    constructor() {
+        this.items = new Map<string, T>();
+        this.ids = [];
+    }
+
+    add(id: string, item: T): void {
+        this.items.set(id, item);
+        this.ids.push(id);
+    }
+
+    get(id: string): Optional<T> {
+        return this.items.get(id);
+    }
+
+    remove(id: string): bool {
+        let newIds: string[] = [];
+        let found: bool = false;
+        for (let i: int = 0; i < this.ids.length(); i++) {
+            if (this.ids[i] == id) {
+                found = true;
+            } else {
+                newIds.push(this.ids[i]);
+            }
+        }
+        if (found) {
+            this.ids = newIds;
+            this.items.delete(id);
+            return true;
+        }
+        return false;
+    }
+
+    all(): T[] {
+        let list: T[] = [];
+        for (let i: int = 0; i < this.ids.length(); i++) {
+            let item = this.items.get(this.ids[i]);
+            if (item != None) {
+                list.push(item as T);
+            }
+        }
+        return list;
+    }
+}
+
+export class AppState {
+    client: Optional<MongoDatabase>;
+    users: EntityCollection<AppUser>;
+    products: EntityCollection<AppProduct>;
+    orders: EntityCollection<AppOrder>;
+    events: EntityCollection<AppEvent>;
+    notes: EntityCollection<NomadNote>;
+    bookmarks: EntityCollection<NomadBookmark>;
+
+    constructor(client: Optional<MongoDatabase> = None) {
+        this.client = client;
+        this.users = new EntityCollection<AppUser>();
+        this.products = new EntityCollection<AppProduct>();
+        this.orders = new EntityCollection<AppOrder>();
+        this.events = new EntityCollection<AppEvent>();
+        this.notes = new EntityCollection<NomadNote>();
+        this.bookmarks = new EntityCollection<NomadBookmark>();
+    }
+}
+
+let globalAppState: Optional<AppState> = None;
+
+export function getAppState(): AppState {
+    if (globalAppState == None) {
+        globalAppState = new AppState();
+    }
+    return globalAppState as AppState;
+}
+
+export function setAppState(state: AppState): void {
+    globalAppState = state;
+}

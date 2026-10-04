@@ -1,694 +1,153 @@
-# TejX HTTP + Mongo Demo
+# TejX Demo: NomadOS Full-Stack Super-App
 
-This repository is a small REST API built in TejX. It shows how to:
+A full-stack, modular **Digital Nomad Command Center & Super-App** built with:
+1. **`mongo-sdk/`**: A standalone, pure TejX MongoDB wire-protocol package.
+2. **`backend/`**: A high-performance REST API service compiled directly from TejX into native machine code.
+3. **`frontend/`**: An ultra-modern React dashboard aggregating **25+ public APIs** with real-time sync to the TejX backend and MongoDB.
 
-- boot an app from a thin `src/main.tx`
-- serve HTTP requests through a reusable `server` module
-- talk to MongoDB directly through a reusable `mongo` module
-- keep app-specific helpers inside `src/app`
-- keep module-internal helpers inside each module folder
+---
 
-The app is a rental-style demo with users, products, orders, events, reports, login, and one outbound HTTP example.
-
-## What Is In This Codebase
-
-There are two main layers.
-
-### 1. Reusable modules
-
-- `src/modules/server/`
-  A lightweight HTTP server and router. It owns request parsing, route matching, path params, method checks, JSON responses, and route logging.
-- `src/modules/mongo/`
-  A direct MongoDB client implemented over the wire protocol. It owns BSON encoding/decoding, SCRAM auth, and command execution.
-
-These module folders are self-contained. The app does not leak into them.
-
-### 2. App layer
-
-- `src/app/server.tx`
-  Bootstraps config, prefers Mongo, falls back to in-memory mode when Mongo is unavailable, loads app state, initializes the router, and starts listening.
-- `src/app/router/`
-  Connects HTTP routes to feature handlers.
-- `src/app/features/`
-  Business features such as users, products, orders, auth, reports, events, and external fetch.
-- `src/app/core/`
-  Shared app-only helpers for persistence, IDs, response helpers, store updates, and state.
-- `src/app/helpers/json.tx`
-  App-local typed JSON helper used only by app code.
-
-## Runtime Model
-
-At startup the app:
-
-1. Resolves environment/config values.
-2. Tries to open a Mongo connection.
-3. Uses Mongo-backed persistence when the database is reachable, otherwise starts in `memory://local-runtime`.
-4. Loads users, products, orders, and events into one in-memory `AppState`.
-5. Starts the HTTP server and routes all requests through that shared runtime state.
-
-When Mongo is available, writes update:
-
-- the in-memory state
-- MongoDB
-- the event log
-
-When Mongo is not available, writes stay in memory for that process lifetime and still append to the in-memory event log.
-
-## Project Layout
+## 🏗️ Architecture & Directory Layout
 
 ```text
-.
-├── build.sh
-├── examples/
-│   ├── clients/
-│   │   └── internal_client.tx
-│   └── probes/
-│       ├── https_probe.tx
-│       ├── json_probe.tx
-│       ├── mongo_probe.tx
-│       └── verify_net.tx
-├── src/
-│   ├── main.tx
-│   ├── app/
-│   │   ├── config/
-│   │   │   └── env.tx
-│   │   ├── core/
-│   │   ├── features/
-│   │   │   ├── auth/
-│   │   │   ├── events/
-│   │   │   ├── external/
-│   │   │   ├── orders/
-│   │   │   ├── products/
-│   │   │   ├── reports/
-│   │   │   ├── search/
-│   │   │   └── users/
-│   │   ├── helpers/
-│   │   │   └── json.tx
-│   │   ├── router/
-│   │   ├── runtime/
-│   │   └── server.tx
-│   └── modules/
-│       ├── mongo/
-│       └── server/
+tejx-demo/
+├── mongo-sdk/                 # Standalone pure TejX MongoDB Driver Package
+│   ├── src/
+│   │   ├── index.tx           # Public driver exports (MongoClient, MongoDatabase)
+│   │   ├── client.tx          # OP_MSG wire protocol client
+│   │   ├── bson.tx            # Full BSON serializer and deserializer
+│   │   ├── auth.tx            # SCRAM-SHA-256 and SCRAM-SHA-1 authentication
+│   │   ├── config.tx          # Mongo URI & configuration options
+│   │   └── json.tx            # Typed BSON-to-JSON bridge
+│   ├── tests/
+│   │   ├── test_bson.tx       # BSON encoder/decoder verification
+│   │   └── test_client.tx     # Client handshake test
+│   └── README.md
+│
+├── backend/                   # Native TejX REST Backend
+│   ├── src/
+│   │   ├── main.tx            # Entry point
+│   │   ├── server/            # HTTP server, router & CORS preflight support
+│   │   └── app/               # Core state, domain models, feature handlers
+│   │       ├── features/      # Users, Products, Orders, Events, Reports, Nomad
+│   │       └── server.tx      # MongoDB probe with automatic in-memory fallback
+│   ├── build.sh               # Native Mach-O compiler script
+│   └── README.md
+│
+├── frontend/                  # React Frontend Application (Vite + React)
+│   ├── src/
+│   │   ├── components/        # Header, KPI strip, and 26 modular widgets
+│   │   ├── services/api.js    # Data aggregator for 25+ APIs + TejX backend
+│   │   ├── styles/index.css   # Glassmorphic dark UI design system
+│   │   ├── App.jsx            # Main dashboard coordinator
+│   │   └── main.jsx
+│   ├── vite.config.js         # API proxy to TejX backend
+│   └── README.md
+│
+├── start.sh                   # Unified single-command launcher
+├── package.json               # Root scripts runner
 └── README.md
 ```
 
-## Important Entry Points
+---
 
-- `src/main.tx`
-  Process entrypoint. It only calls `runApplication()`.
-- `src/app/server.tx`
-  Main bootstrap flow.
-- `src/app/router/index.tx`
-  Full route registration.
-- `src/app/router/handlers.tx`
-  Bridges route contexts into feature handlers.
-- `src/modules/server/index.tx`
-  HTTP server, router, route params, JSON response helpers, and logging.
-- `src/modules/mongo/index.tx`
-  Public Mongo module surface.
+## ⚡ The 25+ APIs in NomadOS
 
-## Build And Run
+NomadOS integrates 25+ distinct data sources organized into responsive category grids:
 
-Prerequisites:
+| # | Category | Widget Name | Data Source / Public API | Key Features |
+|---|---|---|---|---|
+| 1 | **Travel & Environment** | Current Weather | [Open-Meteo Weather API](https://open-meteo.com) | Real-time temperature, wind speed, weather code across global nomad hubs |
+| 2 | **Travel & Environment** | Air Quality Index | [Open-Meteo Air Quality](https://air-quality-api.open-meteo.com) | European AQI, PM2.5, PM10, and Ozone pollution levels |
+| 3 | **Travel & Environment** | IP Geolocation | [ipapi.co](https://ipapi.co) / [IP-API](https://ip-api.com) | Detects client IP, city, region, ISP network, and timezone |
+| 4 | **Travel & Environment** | Country Explorer | [REST Countries API](https://restcountries.com) | Capital, population, official currency, national flag |
+| 5 | **Travel & Environment** | World Time Clocks | [TimeAPI](https://timeapi.io) | Multi-timezone synchronized clocks (Tokyo, London, NYC, Sydney, Dubai, Paris) |
+| 6 | **Travel & Environment** | Public Holidays | [Nager.Date API](https://date.nager.at) | Upcoming statutory holidays by country and year |
+| 7 | **Finance & Markets** | Live Crypto Tracker | [CoinGecko API](https://coingecko.com) | Bitcoin, Ethereum, Solana, Cardano, Dogecoin with 24h change |
+| 8 | **Finance & Markets** | Currency Converter | [Frankfurter Exchange API](https://frankfurter.app) | Live forex exchange rates (USD, EUR, GBP, JPY, CAD, INR) |
+| 9 | **Finance & Markets** | Stock Watchlist | [Alpha Vantage](https://alphavantage.co) / [Finnhub](https://finnhub.io) | Tech market price ticks (AAPL, NVDA, MSFT, GOOGL, TSLA) |
+| 10 | **Finance & Markets** | Financial Sentiment | Market Sentiment Radar | Fear & Greed gauge, volatility index (VIX), market momentum |
+| 11 | **Productivity & Tools** | Free Dictionary | [Free Dictionary API](https://dictionaryapi.dev) | Word definitions, phonetics, parts of speech, and usage examples |
+| 12 | **Productivity & Tools** | Daily Activity Idea | [Bored API](https://bored-api.appbrewery.com) | Random curated productive and leisure tasks for digital nomads |
+| 13 | **Productivity & Tools** | QR Code Generator | [QR Server API](https://goqr.me/api) | Real-time text/URL to downloadable QR code |
+| 14 | **Productivity & Tools** | Email Validator | [Mailboxlayer](https://mailboxlayer.com) Format Spec | Email syntax check, corporate domain classification, deliverability score |
+| 15 | **Productivity & Tools** | Global Tech News | [HackerNews Firebase API](https://news.ycombinator.com) | Live top 5 tech stories with upvotes and direct article links |
+| 16 | **Health & Fitness** | Recipe Explorer | [TheMealDB API](https://themealdb.com) | Random meal generator with photo, ingredients list, and modal cooking steps |
+| 17 | **Health & Fitness** | Nutrition Calculator | [Edamam Nutrition Model](https://edamam.com) | Calorie slider calculating daily protein, carb, fat, and water targets |
+| 18 | **Health & Fitness** | Hotel Workout Routine | [ExerciseDB](https://rapidapi.com) / [Wger](https://wger.de) | Daily bodyweight exercise program for travelers |
+| 19 | **Cosmic Zen** | NASA Astronomy Picture | [NASA APOD API](https://api.nasa.gov) | Daily high-res cosmic photography with scientific explanation |
+| 20 | **Cosmic Zen** | Nomad Motivation | [ZenQuotes](https://zenquotes.io) / [Type.fit](https://type.fit) | Inspirational quotes with one-click clipboard copy |
+| 21 | **Cosmic Zen** | Trending Shows | [TVMaze API](https://tvmaze.com) | Top trending TV series with ratings, genres, and poster artwork |
+| 22 | **Cosmic Zen** | Gaming Releases | [IGDB](https://igdb.com) / [OpenCritic](https://opencritic.com) | Notable video game titles, review scores, and platforms |
+| 23 | **Cosmic Zen** | Pokémon Pokédex | [PokeAPI](https://pokeapi.co) | Interactive Pokédex with animated sprites, stats, and types |
+| 24 | **Cosmic Zen** | Anime Schedule | [Jikan API](https://jikan.moe) (MyAnimeList) | Top anime releases with scores, episode count, and artwork |
+| 25 | **Cosmic Zen** | Pet Stress Relief | [Dog.CEO API](https://dog.ceo) / [The Cat API](https://thecatapi.com) | Instant random pet photo button for travel fatigue relief |
+| 26 | **Core Integration** | **TejX + MongoDB Hub** | TejX REST Backend | Live CRUD for Users, Products, Orders, Nomad Notes, and Audit Events |
 
-- `tejxc` available on `PATH`, or installed at `~/.tejx/bin/tejxc`
-- MongoDB reachable locally or via a URI if you want persistent storage
+---
 
-Build the server:
+## 🚀 Quick Start
+
+### 1. Launch All Services (Single Command)
 
 ```bash
-./build.sh
+cd tejx-demo
+./start.sh
 ```
 
-Run the server:
+This will:
+1. Automatically compile the TejX backend binary with `backend/build.sh`.
+2. Start the native TejX HTTP backend at `http://127.0.0.1:8080`.
+3. Start the Vite React development server at `http://localhost:3000`.
+
+### 2. Manual Commands
 
 ```bash
-./build/server
+# Build the TejX backend
+npm run build:backend
+
+# Test the Mongo SDK
+npm run test:sdk
+
+# Run the backend standalone
+./backend/build/server
+
+# Run the React frontend
+npm run start:frontend
 ```
 
-If MongoDB is not reachable, the app now still starts and serves the full demo API in memory mode. `GET /health` will then report `"storage": "memory://local-runtime"`.
+---
 
-## Configuration
+## ⚙️ Environment Configuration (`.env`)
 
-Preferred Mongo setup is a single URI:
+Both backend and frontend are configured via environment files:
 
-```bash
-export MONGO_URL='mongodb://root:password123@localhost:27017/demo?replicaSet=rs0&authSource=admin'
+### Backend (`backend/.env`)
+
+```env
+PORT=8080
+HOST=127.0.0.1
+MONGO_URI=mongodb://127.0.0.1:27017/tejx_nomad_db
 ```
 
-Supported environment variables:
+### Frontend (`frontend/.env`)
 
-| Variable                                  | Purpose                                  | Default                   |
-| ----------------------------------------- | ---------------------------------------- | ------------------------- |
-| `PORT`                                    | HTTP listen port                         | `3000`                    |
-| `APP_BASE_URL`                            | Public base URL used for startup display | `http://127.0.0.1:<PORT>` |
-| `MONGO_URL` / `MONGO_URI` / `MONGODB_URI` | Full Mongo connection string             | unset                     |
-| `MONGO_HOST`                              | Mongo host when not using a URI          | `127.0.0.1`               |
-| `MONGO_PORT`                              | Mongo port when not using a URI          | `27017`                   |
-| `MONGO_DATABASE`                          | Logical database name                    | `demo`                    |
-| `MONGO_USERNAME` / `MONGO_USER`           | Mongo username                           | `root`                    |
-| `MONGO_PASSWORD`                          | Mongo password                           | `password123`             |
-| `MONGO_AUTH_SOURCE`                       | Auth database                            | `admin`                   |
-| `MONGO_REPLICA_SET`                       | Replica set name                         | `rs0`                     |
-
-## HTTP And Data Conventions
-
-- All API responses are JSON.
-- Item timestamps such as `createdAt` are epoch milliseconds.
-- Generated IDs use a prefix-based format such as `user-<timestamp>-<n>`.
-- Collection endpoints return a normalized shape:
-
-```json
-{
-  "count": 2,
-  "ids": ["user-1", "user-2"],
-  "items": {
-    "user-1": { "...": "..." },
-    "user-2": { "...": "..." }
-  }
-}
+```env
+VITE_PORT=3000
+VITE_BACKEND_URL=http://127.0.0.1:8080
+VITE_APP_TITLE=NomadOS | Digital Nomad Command Center
 ```
 
-- Most app-level errors return:
-
-```json
-{
-  "error": "message"
-}
-```
-
-- Router-level method mismatches return:
-
-```json
-{
-  "error": "Method not allowed",
-  "allowed": ["GET", "POST"]
-}
-```
-
-- Route misses return:
-
-```json
-{
-  "error": "Route not found"
-}
-```
-
-## API Reference
-
-### Root And Diagnostics
-
-#### `GET /`
-
-Returns a welcome document with the top-level API list.
-
-Response shape:
-
-```json
-{
-  "message": "Welcome to TejX REST API",
-  "version": "1.0.0",
-  "endpoints": [
-    "/health",
-    "/api/auth/login",
-    "/api/users",
-    "/api/products",
-    "/api/orders",
-    "/api/reports/summary",
-    "/api/events",
-    "/api/external"
-  ]
-}
-```
-
-#### `GET /health`
-
-Returns a lightweight liveness document.
-
-Response shape:
-
-```json
-{
-  "status": "ok",
-  "service": "tejx-http-mongo-demo",
-  "storage": "mongodb://root:***@127.0.0.1:27017/demo?authSource=admin&replicaSet=rs0",
-  "counts": {
-    "users": 0,
-    "products": 0,
-    "orders": 0,
-    "events": 0
-  }
-}
-```
-
-#### `GET /api/reports/summary`
-
-Returns a live summary of the loaded app state.
-
-Response shape:
-
-```json
-{
-  "summary": {
-    "users": 0,
-    "products": 0,
-    "orders": 0,
-    "events": 0,
-    "revenue": 0.0,
-    "lowStock": {
-      "count": 0,
-      "ids": [],
-      "items": {}
-    }
-  },
-  "storage": "mongodb://root:***@127.0.0.1:27017/demo?authSource=admin&replicaSet=rs0"
-}
-```
-
-#### `GET /api/search?q=<text>`
-
-Performs a simple in-memory substring search across users, products, orders, and events.
-
-Response:
-
-```json
-{
-  "query": "alice",
-  "count": 1,
-  "users": {
-    "count": 1,
-    "ids": ["user-..."],
-    "items": {
-      "user-...": {
-        "id": "user-...",
-        "name": "Alice",
-        "email": "alice@example.com",
-        "role": "customer",
-        "createdAt": 0
-      }
-    }
-  },
-  "products": {
-    "count": 0,
-    "ids": [],
-    "items": {}
-  },
-  "orders": {
-    "count": 0,
-    "ids": [],
-    "items": {}
-  },
-  "events": {
-    "count": 0,
-    "ids": [],
-    "items": {}
-  }
-}
-```
-
-Status: `200`
-
-#### `GET /api/external`
-
-Fetches `https://dummyjson.com/products/1` with built-in `fetchSync(...)` and returns the upstream JSON body.
-
-If the upstream call fails, the endpoint still returns a demo fallback payload:
-
-```json
-{
-  "id": 1,
-  "title": "Fallback Demo Product",
-  "description": "Static fallback returned because the upstream request failed",
-  "price": 99.99,
-  "category": "demo",
-  "source": "fallback",
-  "upstreamAvailable": false,
-  "upstreamError": "..."
-}
-```
-
-### Auth
-
-#### `POST /api/auth/login`
-
-Validates a user by matching the in-memory user collection on `email` and `password`.
-
-Request body:
-
-```json
-{
-  "email": "alice@example.com",
-  "password": "secret"
-}
-```
-
-Success response:
-
-```json
-{
-  "token": "token-user-...-...",
-  "user": {
-    "id": "user-...",
-    "name": "Alice",
-    "email": "alice@example.com",
-    "role": "customer",
-    "createdAt": 0
-  }
-}
-```
-
-Common failures:
-
-- `400` if the body is missing or invalid JSON
-- `400` if `email` or `password` is empty
-- `401` for invalid credentials
-
-### Users
-
-#### `GET /api/users`
-
-Returns all users as a collection view.
-
-User item shape:
-
-```json
-{
-  "id": "user-...",
-  "name": "Alice",
-  "email": "alice@example.com",
-  "role": "customer",
-  "createdAt": 0
-}
-```
-
-#### `POST /api/users`
-
-Creates a user and records an event.
-
-Request body:
-
-```json
-{
-  "name": "Alice",
-  "email": "alice@example.com",
-  "password": "secret",
-  "role": "customer"
-}
-```
-
-Notes:
-
-- `role` defaults to `customer`
-- response does not include the password
-
-Common failures:
-
-- `400` if `name`, `email`, or `password` is missing
-- `400` for invalid JSON
-- `409` if the email already exists
-
-#### `GET /api/users/:userId`
-
-Returns one user view.
-
-#### `PUT /api/users/:userId`
-
-Updates any provided user fields.
-
-Allowed body fields:
-
-```json
-{
-  "name": "Alice Updated",
-  "email": "alice.updated@example.com",
-  "role": "admin",
-  "password": "new-secret"
-}
-```
-
-Common failures:
-
-- `404` if the user does not exist
-- `409` if the new email already belongs to another user
-- `400` for invalid JSON
-
-#### `DELETE /api/users/:userId`
-
-Deletes a user and records an event.
-
-Response:
-
-```json
-{
-  "deleted": true,
-  "id": "user-..."
-}
-```
-
-Constraint:
-
-- returns `409` if the user still owns orders
-
-### Products
-
-#### `GET /api/products`
-
-Returns all products as a collection view.
-
-Product item shape:
-
-```json
-{
-  "id": "product-...",
-  "name": "Keyboard",
-  "price": 1299.0,
-  "stock": 5,
-  "category": "accessories",
-  "createdAt": 0
-}
-```
-
-#### `POST /api/products`
-
-Creates a product and records an event.
-
-Request body:
-
-```json
-{
-  "name": "Keyboard",
-  "price": 1299.0,
-  "stock": 5,
-  "category": "accessories"
-}
-```
-
-Notes:
-
-- `category` defaults to `misc`
-- `stock` defaults to `0`
-
-Common failures:
-
-- `400` if `name` or `price` is missing
-- `400` for invalid JSON
-
-#### `GET /api/products/:productId`
-
-Returns one product view.
-
-#### `PUT /api/products/:productId`
-
-Updates any provided product fields.
-
-Allowed body fields:
-
-```json
-{
-  "name": "Keyboard Pro",
-  "price": 1499.0,
-  "stock": 3,
-  "category": "accessories"
-}
-```
-
-#### `DELETE /api/products/:productId`
-
-Deletes a product and records an event.
-
-Response:
-
-```json
-{
-  "deleted": true,
-  "id": "product-..."
-}
-```
-
-Constraint:
-
-- returns `409` if the product already appears in an order
-
-### Orders
-
-#### `GET /api/orders`
-
-Returns all orders as a collection view.
-
-Order item shape:
-
-```json
-{
-  "id": "order-...",
-  "userId": "user-...",
-  "productIds": ["product-1", "product-2"],
-  "total": 2598.0,
-  "status": "pending",
-  "createdAt": 0
-}
-```
-
-#### `POST /api/orders`
-
-Creates an order and records an event.
-
-Request body:
-
-```json
-{
-  "userId": "user-...",
-  "productIds": ["product-1", "product-2"],
-  "status": "pending"
-}
-```
-
-Notes:
-
-- `status` defaults to `pending`
-- `total` is calculated from the referenced product prices
-
-Common failures:
-
-- `400` if `userId` or `productIds` is missing
-- `404` if the user does not exist
-- `404` if any product ID does not exist
-- `400` for invalid JSON
-
-#### `GET /api/orders/:orderId`
-
-Returns one order view.
-
-#### `PUT /api/orders/:orderId`
-
-Only updates the order status.
-
-Request body:
-
-```json
-{
-  "status": "paid"
-}
-```
-
-Common failures:
-
-- `400` if `status` is missing or empty
-- `400` for invalid JSON
-- `404` if the order does not exist
-
-#### `DELETE /api/orders/:orderId`
-
-Deletes an order and records an event.
-
-Response:
-
-```json
-{
-  "deleted": true,
-  "id": "order-..."
-}
-```
-
-### Events
-
-#### `GET /api/events`
-
-Read-only audit trail of app mutations.
-
-Event item shape:
-
-```json
-{
-  "id": "event-...",
-  "action": "created",
-  "entity": "user",
-  "entityId": "user-...",
-  "createdAt": 0
-}
-```
-
-Events are appended automatically for:
-
-- user create, update, delete
-- product create, update, delete
-- order create, update, delete
-
-### Common Status Codes
-
-- `200` successful read or update
-- `201` resource created
-- `400` invalid JSON or missing required fields
-- `401` invalid login
-- `404` resource or route not found
-- `405` method not allowed
-- `409` business rule conflict
-- `500` unexpected internal failure
-
-## Module Notes
-
-### `server` module
-
-`src/modules/server/index.tx` provides:
-
-- raw HTTP request parsing
-- `ServerRequest` and `ServerResponse`
-- JSON/text response helpers
-- route tree matching with path params
-- method-aware routing with `405` handling
-- request logging
-
-### `mongo` module
-
-`src/modules/mongo/index.tx` is the public Mongo entrypoint.
-
-Internally it owns:
-
-- connection string parsing and config mapping
-- BSON encoding and decoding
-- SCRAM-SHA-256 authentication
-- OP_MSG command framing
-- direct socket-based Mongo communication
-
-The Mongo module returns plain values across its public boundary. App-specific JSON wrapping stays in `src/app`.
-
-## Built-In HTTP Client
-
-Outbound HTTP calls use the language runtime directly through built-in `fetchSync(...)` or `fetch(...)`.
-
-Example:
-
-```tx
-let response = fetchSync("https://dummyjson.com/products/1", {
-    timeoutMs: 10000
-});
-```
-
-There is no custom HTTP client module in this app anymore.
-
-## Notes
-
-- The app is Mongo-only. Old file-backed storage is removed.
-- `GET /health` is a shallow liveness and cache summary endpoint.
-- `GET /api/search` searches the currently loaded in-memory state.
-- `build.sh` auto-detects the sibling `../tejx-lang` toolchain when it exists.
+---
+
+## 🍃 MongoDB Integration & Dual-Mode Persistence
+
+1. **When MongoDB is running** (`mongodb://127.0.0.1:27017`):
+   - The TejX backend connects using `mongo-sdk` via pure BSON wire protocol.
+   - All users, products, orders, notes, and audit events are persisted in the database.
+   - The frontend displays a green `MongoDB Live` status indicator.
+
+2. **When MongoDB is not running**:
+   - The backend gracefully switches to `memory://local-runtime`.
+   - The application continues serving all routes and mutations seamlessly in memory with seed data.
+   - The frontend displays an amber `In-Memory` status indicator.

@@ -1,0 +1,128 @@
+// Portable Mongo connection settings shared between the public and internal client layers.
+export class MongoConnectionConfig {
+    uri: string;
+    host: string;
+    port: int;
+    database: string;
+    username: string;
+    password: string;
+    authDatabase: string;
+    replicaSet: string;
+
+    constructor(
+        uri: string,
+        host: string,
+        port: int,
+        database: string,
+        username: string,
+        password: string,
+        authDatabase: string,
+        replicaSet: string
+    ) {
+        this.uri = uri;
+        this.host = host;
+        this.port = port;
+        this.database = database;
+        this.username = username;
+        this.password = password;
+        this.authDatabase = authDatabase;
+        this.replicaSet = replicaSet;
+    }
+}
+
+export function cloneConnectionConfig(connection: MongoConnectionConfig): MongoConnectionConfig {
+    return new MongoConnectionConfig(
+        connection.uri,
+        connection.host,
+        connection.port,
+        connection.database,
+        connection.username,
+        connection.password,
+        connection.authDatabase,
+        connection.replicaSet
+    );
+}
+
+export function parseMongoUri(uri: string): MongoConnectionConfig {
+    let s: string = uri.trim();
+    if (s.startsWith("mongodb://")) {
+        s = s.substring(10, s.length());
+    } else if (s.startsWith("mongodb+srv://")) {
+        s = s.substring(14, s.length());
+    }
+
+    let username: string = "";
+    let password: string = "";
+    let authDatabase: string = "";
+    let replicaSet: string = "";
+
+    // Parse authentication (username:password@)
+    let atIdx: int = s.indexOf("@");
+    if (atIdx >= 0) {
+        let authPart: string = s.substring(0, atIdx);
+        s = s.substring(atIdx + 1, s.length());
+        let colonIdx: int = authPart.indexOf(":");
+        if (colonIdx >= 0) {
+            username = authPart.substring(0, colonIdx);
+            password = authPart.substring(colonIdx + 1, authPart.length());
+        } else {
+            username = authPart;
+        }
+    }
+
+    // Parse options (?authSource=...&replicaSet=...)
+    let qIdx: int = s.indexOf("?");
+    if (qIdx >= 0) {
+        let queryPart: string = s.substring(qIdx + 1, s.length());
+        s = s.substring(0, qIdx);
+        let pairs: string[] = queryPart.split("&");
+        for (let i: int = 0; i < pairs.length(); i++) {
+            let pair: string = pairs[i];
+            let eqIdx: int = pair.indexOf("=");
+            if (eqIdx > 0) {
+                let k: string = pair.substring(0, eqIdx).trim();
+                let v: string = pair.substring(eqIdx + 1, pair.length()).trim();
+                if (k == "authSource") {
+                    authDatabase = v;
+                } else if (k == "replicaSet") {
+                    replicaSet = v;
+                }
+            }
+        }
+    }
+
+    // Parse database name (/dbname)
+    let database: string = "tejx_nomad_db";
+    let slashIdx: int = s.indexOf("/");
+    if (slashIdx >= 0) {
+        let dbPart: string = s.substring(slashIdx + 1, s.length()).trim();
+        if (dbPart != "") {
+            database = dbPart;
+        }
+        s = s.substring(0, slashIdx);
+    }
+
+    // Parse host and port (host:port)
+    let host: string = "127.0.0.1";
+    let port: int = 27017;
+    let colonIdx: int = s.indexOf(":");
+    if (colonIdx >= 0) {
+        host = s.substring(0, colonIdx);
+        let portStr: string = s.substring(colonIdx + 1, s.length());
+        port = Number.Int(portStr);
+    } else if (s != "") {
+        host = s;
+    }
+
+    return new MongoConnectionConfig(
+        uri,
+        host,
+        port,
+        database,
+        username,
+        password,
+        authDatabase,
+        replicaSet
+    );
+}
+

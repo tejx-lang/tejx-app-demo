@@ -1,0 +1,31 @@
+// Product domain model
+import { JsonObject, objectOf } from "../../helpers/json.tx";
+
+export class AppProduct {
+    id: string;
+    name: string;
+    price: float;
+    category: string;
+    stock: int;
+    createdAt: int64;
+
+    constructor(id: string, name: string, price: float, category: string, stock: int, createdAt: int64) {
+        this.id = id;
+        this.name = name;
+        this.price = price;
+        this.category = category;
+        this.stock = stock;
+        this.createdAt = createdAt;
+    }
+
+    toJSON(): any {
+        return {
+            "id": this.id,
+            "name": this.name,
+            "price": this.price,
+            "category": this.category,
+            "stock": this.stock,
+            "createdAt": this.createdAt
+        };
+    }
+}

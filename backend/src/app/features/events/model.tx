@@ -1,0 +1,28 @@
+// Audit event domain model
+import { JsonObject, objectOf } from "../../helpers/json.tx";
+
+export class AppEvent {
+    id: string;
+    action: string;
+    entity: string;
+    entityId: string;
+    timestamp: int64;
+
+    constructor(id: string, action: string, entity: string, entityId: string, timestamp: int64) {
+        this.id = id;
+        this.action = action;
+        this.entity = entity;
+        this.entityId = entityId;
+        this.timestamp = timestamp;
+    }
+
+    toJSON(): any {
+        return {
+            "id": this.id,
+            "action": this.action,
+            "entity": this.entity,
+            "entityId": this.entityId,
+            "timestamp": this.timestamp
+        };
+    }
+}

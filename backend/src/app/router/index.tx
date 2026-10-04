@@ -1,0 +1,104 @@
+// Central API Router
+import { AppHttpRouter, AppHttpResponse, AppRouteContext } from "../../server/index.tx";
+import { jsonSuccess } from "../core/responses.tx";
+import { JsonObject, objectOf } from "../helpers/json.tx";
+import { getStorageMode } from "../core/persistence.tx";
+import { now } from "std:time";
+
+import {
+    handleListUsers,
+    handleGetUser,
+    handleCreateUser,
+    handleUpdateUser,
+    handleDeleteUser
+} from "../features/users/handler.tx";
+
+import {
+    handleListProducts,
+    handleGetProduct,
+    handleCreateProduct,
+    handleUpdateProduct,
+    handleDeleteProduct
+} from "../features/products/handler.tx";
+
+import {
+    handleListOrders,
+    handleGetOrder,
+    handleCreateOrder,
+    handleUpdateOrder,
+    handleDeleteOrder
+} from "../features/orders/handler.tx";
+
+import {
+    handleGetNomadState,
+    handleCreateNomadNote,
+    handleDeleteNomadNote,
+    handleCreateNomadBookmark,
+    handleDeleteNomadBookmark
+} from "../features/nomad/handler.tx";
+
+import { handleListEvents } from "../features/events/handler.tx";
+import { handleGetSummaryReport } from "../features/reports/handler.tx";
+import { handleSearch } from "../features/search/handler.tx";
+import { handleExternalUpstream } from "../features/external/handler.tx";
+
+function handleWelcome(ctx: AppRouteContext): AppHttpResponse {
+    let out: JsonObject = objectOf({});
+    out.setString("name", "TejX Digital Nomad Super-App API");
+    out.setString("version", "2.0.0");
+    out.setString("engine", "TejX Production Compiler (LLVM Native)");
+    out.setString("storage", getStorageMode());
+    return jsonSuccess("Welcome to TejX API", out);
+}
+
+function handleHealth(ctx: AppRouteContext): AppHttpResponse {
+    let out: JsonObject = objectOf({});
+    out.setString("status", "healthy");
+    out.setString("storageMode", getStorageMode());
+    out.setInt64("timestamp", now());
+    return jsonSuccess("System healthy", out);
+}
+
+export function createAppRouter(): AppHttpRouter {
+    let router: AppHttpRouter = new AppHttpRouter();
+
+    // System routes
+    router.get("/", handleWelcome);
+    router.get("/health", handleHealth);
+    router.get("/api/external", handleExternalUpstream);
+
+    // Analytics & search
+    router.get("/api/reports/summary", handleGetSummaryReport);
+    router.get("/api/search", handleSearch);
+    router.get("/api/events", handleListEvents);
+
+    // Users CRUD
+    router.get("/api/users", handleListUsers);
+    router.post("/api/users", handleCreateUser);
+    router.get("/api/users/:userId", handleGetUser);
+    router.put("/api/users/:userId", handleUpdateUser);
+    router.deleteRoute("/api/users/:userId", handleDeleteUser);
+
+    // Products CRUD
+    router.get("/api/products", handleListProducts);
+    router.post("/api/products", handleCreateProduct);
+    router.get("/api/products/:productId", handleGetProduct);
+    router.put("/api/products/:productId", handleUpdateProduct);
+    router.deleteRoute("/api/products/:productId", handleDeleteProduct);
+
+    // Orders CRUD
+    router.get("/api/orders", handleListOrders);
+    router.post("/api/orders", handleCreateOrder);
+    router.get("/api/orders/:orderId", handleGetOrder);
+    router.put("/api/orders/:orderId", handleUpdateOrder);
+    router.deleteRoute("/api/orders/:orderId", handleDeleteOrder);
+
+    // Nomad Hub Preferences & Notes
+    router.get("/api/nomad/state", handleGetNomadState);
+    router.post("/api/nomad/notes", handleCreateNomadNote);
+    router.deleteRoute("/api/nomad/notes/:noteId", handleDeleteNomadNote);
+    router.post("/api/nomad/bookmarks", handleCreateNomadBookmark);
+    router.deleteRoute("/api/nomad/bookmarks/:bookmarkId", handleDeleteNomadBookmark);
+
+    return router;
+}

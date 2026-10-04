@@ -1,0 +1,21 @@
+// Database persistence configuration and connection status
+import { MongoConnection, createMongoConnection } from "../../../../mongo-sdk/src/index.tx";
+
+let activeConnection: Optional<MongoConnection> = None;
+let isConnectedToMongo: bool = false;
+
+export function configureDatabaseConnection(conn: MongoConnection, connected: bool): void {
+    activeConnection = conn;
+    isConnectedToMongo = connected;
+}
+
+export function isMongoActive(): bool {
+    return isConnectedToMongo;
+}
+
+export function getStorageMode(): string {
+    if (isConnectedToMongo) {
+        return "mongodb";
+    }
+    return "memory";
+}

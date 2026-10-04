@@ -1,0 +1,37 @@
+// Standalone BSON and JSON test for mongo-sdk package
+import { MongoJsonObject, objectOf } from "../src/json.tx";
+import { encodeDocument, decodeDocument } from "../src/bson.tx";
+import std:binary;
+
+function main(): void {
+    print("=== Testing TejX Mongo SDK BSON Engine ===");
+
+    let doc: MongoJsonObject = objectOf({});
+    doc.setString("title", "TejX MongoDB Driver");
+    doc.setInt("version", 1);
+    doc.setBool("active", true);
+
+    let bytes: int[] = encodeDocument(doc);
+    print("Encoded document byte length: ", bytes.length());
+
+    if (bytes.length() <= 5) {
+        throw new Error("BSON encoding failed: document too short");
+    }
+
+    let decoded: MongoJsonObject = decodeDocument(bytes);
+    print("Decoded title: ", decoded.string("title"));
+    print("Decoded version: ", decoded.int("version"));
+    print("Decoded active: ", decoded.bool("active"));
+
+    if (decoded.string("title") != "TejX MongoDB Driver") {
+        throw new Error("BSON decoding mismatch on 'title'");
+    }
+    if (decoded.int("version") != 1) {
+        throw new Error("BSON decoding mismatch on 'version'");
+    }
+    if (!decoded.bool("active")) {
+        throw new Error("BSON decoding mismatch on 'active'");
+    }
+
+    print("=== All Mongo SDK BSON Tests Passed! ===");
+}

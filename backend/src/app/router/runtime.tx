@@ -1,0 +1,42 @@
+// Router execution runtime
+import { now } from "std:time";
+import { AppHttpRequest, AppHttpResponse, AppRouteContext, RouteHandler, RouteResolution, AppHttpRouter, logRoute } from "../../server/index.tx";
+import { jsonError } from "../core/responses.tx";
+import { createAppRouter } from "./index.tx";
+
+let appRouterValue: Optional<AppHttpRouter> = None;
+
+export function initializeAppRouter(): void {
+    if (appRouterValue == None) {
+        appRouterValue = createAppRouter();
+    }
+}
+
+function appRouter(): AppHttpRouter {
+    if (appRouterValue == None) {
+        initializeAppRouter();
+    }
+    return appRouterValue as AppHttpRouter;
+}
+
+export function handleAppRequest(req: AppHttpRequest): AppHttpResponse {
+    let startedAt: int64 = now();
+    let resolution: RouteResolution = appRouter().resolve(req);
+
+    if (resolution.response != None) {
+        let routedResponse: AppHttpResponse = resolution.response as AppHttpResponse;
+        logRoute(req, resolution.routeName, routedResponse, startedAt);
+        return routedResponse;
+    }
+
+    if (resolution.handler == None || resolution.context == None) {
+        let failure: AppHttpResponse = jsonError("Route resolution failed", 500);
+        logRoute(req, resolution.routeName, failure, startedAt);
+        return failure;
+    }
+
+    let handler: RouteHandler = resolution.handler as RouteHandler;
+    let response: AppHttpResponse = handler.handle(resolution.context as AppRouteContext);
+    logRoute(req, resolution.routeName, response, startedAt);
+    return response;
+}

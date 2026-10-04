@@ -1,0 +1,46 @@
+// Cross-entity global search handler
+import { AppHttpResponse, AppRouteContext } from "../../../server/index.tx";
+import { JsonObject, objectOf } from "../../helpers/json.tx";
+import { jsonSuccess } from "../../core/responses.tx";
+import { getAppState, AppState } from "../../core/state.tx";
+
+export function handleSearch(ctx: AppRouteContext): AppHttpResponse {
+    let q: string = ctx.request.queryParam("q").toLowerCase();
+    let state: AppState = getAppState();
+
+    let matchingUsers: any[] = [];
+    let users = state.users.all();
+    for (let i = 0; i < users.length(); i++) {
+        let u = users[i];
+        if (q == "" || u.name.toLowerCase().indexOf(q) >= 0 || u.email.toLowerCase().indexOf(q) >= 0 || u.role.toLowerCase().indexOf(q) >= 0) {
+            matchingUsers.push(u.toJSON());
+        }
+    }
+
+    let matchingProducts: any[] = [];
+    let products = state.products.all();
+    for (let i = 0; i < products.length(); i++) {
+        let p = products[i];
+        if (q == "" || p.name.toLowerCase().indexOf(q) >= 0 || p.category.toLowerCase().indexOf(q) >= 0) {
+            matchingProducts.push(p.toJSON());
+        }
+    }
+
+    let matchingNotes: any[] = [];
+    let notes = state.notes.all();
+    for (let i = 0; i < notes.length(); i++) {
+        let n = notes[i];
+        if (q == "" || n.title.toLowerCase().indexOf(q) >= 0 || n.content.toLowerCase().indexOf(q) >= 0) {
+            matchingNotes.push(n.toJSON());
+        }
+    }
+
+    let out: JsonObject = objectOf({});
+    out.setBool("success", true);
+    out.setString("query", q);
+    out.setArray("users", matchingUsers);
+    out.setArray("products", matchingProducts);
+    out.setArray("notes", matchingNotes);
+
+    return jsonSuccess("Search results", out);
+}

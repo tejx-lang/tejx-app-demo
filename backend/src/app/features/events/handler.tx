@@ -1,0 +1,20 @@
+// Events audit route handler
+import { AppHttpResponse, AppRouteContext } from "../../../server/index.tx";
+import { JsonObject, objectOf } from "../../helpers/json.tx";
+import { jsonSuccess } from "../../core/responses.tx";
+import { getAppState, AppState } from "../../core/state.tx";
+
+export function handleListEvents(ctx: AppRouteContext): AppHttpResponse {
+    let state: AppState = getAppState();
+    let events = state.events.all();
+    let list: any[] = [];
+    for (let i = 0; i < events.length(); i++) {
+        list.push(events[i].toJSON());
+    }
+
+    let out: JsonObject = objectOf({});
+    out.setBool("success", true);
+    out.setInt("count", list.length());
+    out.setArray("events", list);
+    return jsonSuccess("Events retrieved", out);
+}
