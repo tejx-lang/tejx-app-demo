@@ -35,7 +35,8 @@ function isArrayValue(value: any): bool {
         return false;
     }
     
-    return typeof(value)=="array";
+    let t: string = typeof(value);
+    return t == "array" || t.endsWith("[]");
 }
 
 function isIntegerType(kind: string): bool {
@@ -47,7 +48,11 @@ function isFloatType(kind: string): bool {
 }
 
 function isBinaryValue(value: any): bool {
-    if (value == None || typeof(value) != "object") {
+    if (value == None) {
+        return false;
+    }
+    let t: string = typeof(value);
+    if (t != "object" && t != "struct") {
         return false;
     }
     
@@ -236,7 +241,7 @@ class BsonEncoder {
             return writer.toBytes();
         }
         
-        if (kind == "object") {
+        if (kind == "object" || kind == "struct") {
             if (isBinaryValue(value)) {
                 let payload: int[] = value["data"] as int[];
                 let subtype: int = 0;

@@ -10,7 +10,8 @@ import {
     handleGetUser,
     handleCreateUser,
     handleUpdateUser,
-    handleDeleteUser
+    handleDeleteUser,
+    handlePatchUser
 } from "../features/users/handler.tx";
 
 import {
@@ -18,8 +19,15 @@ import {
     handleGetProduct,
     handleCreateProduct,
     handleUpdateProduct,
-    handleDeleteProduct
+    handleDeleteProduct,
+    handlePatchProduct
 } from "../features/products/handler.tx";
+
+import {
+    handleGetMongoOperations,
+    handleExecuteMongoOperation,
+    handleOptionsMongoOperations
+} from "../features/database/operations.tx";
 
 import {
     handleListOrders,
@@ -41,6 +49,39 @@ import { handleListEvents } from "../features/events/handler.tx";
 import { handleGetSummaryReport } from "../features/reports/handler.tx";
 import { handleSearch } from "../features/search/handler.tx";
 import { handleExternalUpstream } from "../features/external/handler.tx";
+
+import {
+    handleGetDashboardConfig,
+    handleUpdateDashboardConfig
+} from "../features/dashboard/handler.tx";
+
+import {
+    handleDatabaseStatus,
+    handleDatabaseReconnect
+} from "../features/database/handler.tx";
+
+import {
+    handleGetWeatherData,
+    handleGetAirQualityData,
+    handleGetGeolocationData,
+    handleGetCountryData,
+    handleGetExchangeData,
+    handleGetHolidaysData,
+    handleGetCryptoData,
+    handleGetStocksData,
+    handleGetSentimentData,
+    handleGetNewsData,
+    handleGetDictionaryData,
+    handleGetActivityData,
+    handleGetRecipeData,
+    handleGetNasaApodData,
+    handleGetQuotesData,
+    handleGetShowsData,
+    handleGetPokemonData,
+    handleGetAnimeData,
+    handleGetPetsData,
+    handleGetGamingData
+} from "../features/external_data/handler.tx";
 
 function handleWelcome(ctx: AppRouteContext): AppHttpResponse {
     let out: JsonObject = objectOf({});
@@ -67,6 +108,39 @@ export function createAppRouter(): AppHttpRouter {
     router.get("/health", handleHealth);
     router.get("/api/external", handleExternalUpstream);
 
+    // Database diagnostics, operations workbench and reconnect
+    router.get("/api/database/status", handleDatabaseStatus);
+    router.post("/api/database/reconnect", handleDatabaseReconnect);
+    router.get("/api/database/operations", handleGetMongoOperations);
+    router.post("/api/database/operations", handleExecuteMongoOperation);
+    router.options("/api/database/operations", handleOptionsMongoOperations);
+
+    // Backend-driven dynamic dashboard configuration
+    router.get("/api/dashboard/config", handleGetDashboardConfig);
+    router.post("/api/dashboard/config", handleUpdateDashboardConfig);
+
+    // Backend-aggregated external data endpoints (shielding frontend from external servers)
+    router.get("/api/data/weather", handleGetWeatherData);
+    router.get("/api/data/air-quality", handleGetAirQualityData);
+    router.get("/api/data/geolocation", handleGetGeolocationData);
+    router.get("/api/data/country", handleGetCountryData);
+    router.get("/api/data/forex", handleGetExchangeData);
+    router.get("/api/data/holidays", handleGetHolidaysData);
+    router.get("/api/data/crypto", handleGetCryptoData);
+    router.get("/api/data/stocks", handleGetStocksData);
+    router.get("/api/data/sentiment", handleGetSentimentData);
+    router.get("/api/data/news", handleGetNewsData);
+    router.get("/api/data/dictionary", handleGetDictionaryData);
+    router.get("/api/data/activity", handleGetActivityData);
+    router.get("/api/data/recipe", handleGetRecipeData);
+    router.get("/api/data/apod", handleGetNasaApodData);
+    router.get("/api/data/quotes", handleGetQuotesData);
+    router.get("/api/data/shows", handleGetShowsData);
+    router.get("/api/data/pokemon", handleGetPokemonData);
+    router.get("/api/data/anime", handleGetAnimeData);
+    router.get("/api/data/pets", handleGetPetsData);
+    router.get("/api/data/gaming", handleGetGamingData);
+
     // Analytics & search
     router.get("/api/reports/summary", handleGetSummaryReport);
     router.get("/api/search", handleSearch);
@@ -77,6 +151,7 @@ export function createAppRouter(): AppHttpRouter {
     router.post("/api/users", handleCreateUser);
     router.get("/api/users/:userId", handleGetUser);
     router.put("/api/users/:userId", handleUpdateUser);
+    router.patch("/api/users/:userId", handlePatchUser);
     router.deleteRoute("/api/users/:userId", handleDeleteUser);
 
     // Products CRUD
@@ -84,6 +159,7 @@ export function createAppRouter(): AppHttpRouter {
     router.post("/api/products", handleCreateProduct);
     router.get("/api/products/:productId", handleGetProduct);
     router.put("/api/products/:productId", handleUpdateProduct);
+    router.patch("/api/products/:productId", handlePatchProduct);
     router.deleteRoute("/api/products/:productId", handleDeleteProduct);
 
     // Orders CRUD

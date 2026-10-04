@@ -250,7 +250,17 @@ export function binaryPayloadToText(payload: MongoJsonObject): string {
     }
 
     if (payload.string("_bsonType") == "binary" && payload.has("data")) {
-        return bytesString(payload.intArray("data"));
+        let rawBytes: int[] = payload.intArray("data");
+        let rawStr: string = bytesString(rawBytes);
+        try {
+            let decoded: int[] = base64Decode(rawStr);
+            let decodedStr: string = bytesString(decoded);
+            if (decodedStr.indexOf("r=") >= 0 || decodedStr.indexOf("v=") >= 0) {
+                return decodedStr;
+            }
+        } catch (e) {
+        }
+        return rawStr;
     }
 
     throw new Error("Unsupported SASL payload type");

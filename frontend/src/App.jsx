@@ -50,12 +50,13 @@ import {
 // TejX Backend + MongoDB Central Manager
 import { TejxBackendWidget } from './components/widgets/TejxBackendWidget';
 
-import { getBackendHealth, getBackendSummary, fetchCurrentWeather, fetchCryptoPrices, fetchIpLocation } from './services/api';
+import { getBackendHealth, getBackendSummary, fetchCurrentWeather, fetchCryptoPrices, fetchIpLocation, getDashboardConfig } from './services/api';
 
 export default function App() {
   const [activeCategory, setActiveCategory] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [backendStatus, setBackendStatus] = useState({ online: true, storage: 'in-memory' });
+  const [dashboardConfig, setDashboardConfig] = useState(null);
   const [summaryData, setSummaryData] = useState(null);
   const [weatherData, setWeatherData] = useState(null);
   const [cryptoData, setCryptoData] = useState(null);
@@ -63,18 +64,20 @@ export default function App() {
 
   const refreshAll = async () => {
     try {
-      const [h, s, w, c, ip] = await Promise.all([
+      const [h, s, w, c, ip, cfg] = await Promise.all([
         getBackendHealth(),
         getBackendSummary(),
         fetchCurrentWeather(),
         fetchCryptoPrices(),
-        fetchIpLocation()
+        fetchIpLocation(),
+        getDashboardConfig()
       ]);
       setBackendStatus({ online: h.status === 'healthy', storage: h.storageMode || 'in-memory' });
       setSummaryData(s);
       setWeatherData(w);
       setCryptoData(c);
       setIpLocation(ip);
+      setDashboardConfig(cfg);
     } catch {
       // Graceful fallback values
     }
@@ -101,6 +104,7 @@ export default function App() {
         searchQuery={searchQuery}
         setSearchQuery={setSearchQuery}
         backendStatus={backendStatus}
+        dashboardConfig={dashboardConfig}
         onRefreshAll={refreshAll}
       />
 
@@ -114,7 +118,7 @@ export default function App() {
       <main className="widgets-grid">
         {/* Core TejX + MongoDB Manager */}
         {isVisible('backend', ['tejx', 'mongo', 'mongodb', 'database', 'users', 'products', 'orders', 'events', 'notes']) && (
-          <TejxBackendWidget />
+          <TejxBackendWidget onConfigUpdated={(cfg) => setDashboardConfig(prev => ({ ...prev, ...cfg }))} />
         )}
 
         {/* Travel & Environment */}

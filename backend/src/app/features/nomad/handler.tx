@@ -4,7 +4,13 @@ import { JsonObject, objectOf, parseJson } from "../../helpers/json.tx";
 import { jsonSuccess, jsonError, jsonNotFound } from "../../core/responses.tx";
 import { getAppState, AppState } from "../../core/state.tx";
 import { nextEntityId } from "../../core/ids.tx";
-import { recordAppEvent } from "../../core/store.tx";
+import { 
+    recordAppEvent, 
+    persistNomadNote, 
+    deleteNomadNoteFromDb, 
+    persistNomadBookmark, 
+    deleteNomadBookmarkFromDb 
+} from "../../core/store.tx";
 import { NomadNote, NomadBookmark } from "./model.tx";
 import { now } from "std:time";
 
@@ -45,6 +51,7 @@ export function handleCreateNomadNote(ctx: AppRouteContext): AppHttpResponse {
         let note: NomadNote = new NomadNote(id, title, content, category, now());
         state.notes.add(id, note);
 
+        persistNomadNote(note);
         recordAppEvent("note_created", "NomadNote", id);
 
         let out: JsonObject = objectOf({});
@@ -61,6 +68,7 @@ export function handleDeleteNomadNote(ctx: AppRouteContext): AppHttpResponse {
     if (!state.notes.remove(id)) {
         return jsonNotFound("Note not found: " + id);
     }
+    deleteNomadNoteFromDb(id);
     recordAppEvent("note_deleted", "NomadNote", id);
     return jsonSuccess("Note deleted");
 }
@@ -81,6 +89,7 @@ export function handleCreateNomadBookmark(ctx: AppRouteContext): AppHttpResponse
         let bm: NomadBookmark = new NomadBookmark(id, type, title, data, now());
         state.bookmarks.add(id, bm);
 
+        persistNomadBookmark(bm);
         recordAppEvent("bookmark_created", "NomadBookmark", id);
 
         let out: JsonObject = objectOf({});
@@ -97,6 +106,8 @@ export function handleDeleteNomadBookmark(ctx: AppRouteContext): AppHttpResponse
     if (!state.bookmarks.remove(id)) {
         return jsonNotFound("Bookmark not found: " + id);
     }
+    deleteNomadBookmarkFromDb(id);
     recordAppEvent("bookmark_deleted", "NomadBookmark", id);
-    return jsonSuccess("Bookmark deleted");
+    return jsonSuccess("Bookmark removed");
 }
+

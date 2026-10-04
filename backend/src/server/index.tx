@@ -14,15 +14,15 @@ function stableCopy(value: string): string {
 }
 
 export function colorText(text: string, colorCode: string): string {
-    return binary.toString([27, 91]) + colorCode + "m" + text + binary.toString([27, 91, 48, 109]);
+    return text;
 }
 
 export function colorLabel(text: string, colorCode: string): string {
-    return colorText("[" + text + "]", colorCode);
+    return "[" + text + "]";
 }
 
 export function dimText(text: string): string {
-    return colorText(text, "90");
+    return text;
 }
 
 function parseHeaderLines(lines: string[], startIndex: int): Map<string, string> {
@@ -214,6 +214,14 @@ export class AppRouteContext {
         }
         return val as string;
     }
+
+    query(name: string, fallback: string = ""): string {
+        let val: string = this.request.queryParam(name);
+        if (val == "") {
+            return fallback;
+        }
+        return val;
+    }
 }
 
 class RouteDefinition {
@@ -325,14 +333,19 @@ export class AppHttpRouter {
         return this.register("DELETE", path, handler);
     }
 
-    resolve(req: AppHttpRequest): RouteResolution {
-        // Immediate CORS preflight response
-        if (req.method == "OPTIONS") {
-            let preflight: AppHttpResponse = new AppHttpResponse();
-            preflight.status = 204;
-            return new RouteResolution("options_preflight", None, None, preflight);
-        }
+    patch(path: string, handler: (ctx: AppRouteContext) => AppHttpResponse): AppHttpRouter {
+        return this.register("PATCH", path, handler);
+    }
 
+    head(path: string, handler: (ctx: AppRouteContext) => AppHttpResponse): AppHttpRouter {
+        return this.register("HEAD", path, handler);
+    }
+
+    options(path: string, handler: (ctx: AppRouteContext) => AppHttpResponse): AppHttpRouter {
+        return this.register("OPTIONS", path, handler);
+    }
+
+    resolve(req: AppHttpRequest): RouteResolution {
         let targetSegments: string[] = [];
         let rawParts: string[] = req.path.split("/");
         for (let i: int = 0; i < rawParts.length(); i++) {
@@ -342,6 +355,10 @@ export class AppHttpRouter {
         }
 
         let allowedMethods: string[] = [];
+        let matchingGetRoute: Optional<RouteDefinition> = None;
+        let matchingGetParams: Optional<Map<string, string>> = None;
+        let explicitOptionsRoute: Optional<RouteDefinition> = None;
+        let explicitOptionsParams: Optional<Map<string, string>> = None;
 
         for (let r: int = 0; r < this.routes.length(); r++) {
             let route: RouteDefinition = this.routes[r];
@@ -370,9 +387,55 @@ export class AppHttpRouter {
                     let handler: Optional<RouteHandler> = this.handlers.get(route.signature());
                     let ctx: AppRouteContext = new AppRouteContext(req, params);
                     return new RouteResolution(route.name, handler, ctx, None);
-                } else {
-                    allowedMethods.push(route.method);
                 }
+                if (route.method == "OPTIONS") {
+                    explicitOptionsRoute = route;
+                    explicitOptionsParams = params;
+                }
+                if (route.method == "GET") {
+                    matchingGetRoute = route;
+                    matchingGetParams = params;
+                }
+                allowedMethods.push(route.method);
+            }
+        }
+
+        // Handle OPTIONS requests (both explicit and dynamic preflight)
+        if (req.method == "OPTIONS") {
+            if (explicitOptionsRoute != None) {
+                let route: RouteDefinition = explicitOptionsRoute as RouteDefinition;
+                let handler: Optional<RouteHandler> = this.handlers.get(route.signature());
+                let ctx: AppRouteContext = new AppRouteContext(req, explicitOptionsParams as Map<string, string>);
+                return new RouteResolution(route.name, handler, ctx, None);
+            }
+            let preflight: AppHttpResponse = new AppHttpResponse();
+            preflight.status = 204;
+            let allowStr: string = allowedMethods.length() > 0 ? allowedMethods.join(", ") : "GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD";
+            preflight.setHeader("allow", allowStr);
+            preflight.setHeader("access-control-allow-methods", allowStr);
+            preflight.setHeader("access-control-allow-headers", "Content-Type, Authorization, X-Requested-With, Accept");
+            preflight.setHeader("access-control-allow-origin", "*");
+            return new RouteResolution("options_preflight", None, None, preflight);
+        }
+
+        // Handle HEAD by delegating to GET with empty body
+        if (req.method == "HEAD" && matchingGetRoute != None) {
+            let route: RouteDefinition = matchingGetRoute as RouteDefinition;
+            let handler: Optional<RouteHandler> = this.handlers.get(route.signature());
+            let ctx: AppRouteContext = new AppRouteContext(req, matchingGetParams as Map<string, string>);
+            if (handler != None) {
+                let rh: RouteHandler = handler as RouteHandler;
+                let fullRes: AppHttpResponse = rh.handle(ctx);
+                let headRes: AppHttpResponse = new AppHttpResponse();
+                headRes.status = fullRes.status;
+                let headKeys: string[] = fullRes.headers.keys();
+                for (let k: int = 0; k < headKeys.length(); k++) {
+                    let kn: string = headKeys[k];
+                    headRes.setHeader(kn, fullRes.header(kn));
+                }
+                headRes.setHeader("content-length", String(fullRes.body.length()));
+                headRes.body = "";
+                return new RouteResolution(route.name + "_head", None, None, headRes);
             }
         }
 
@@ -423,7 +486,19 @@ function processClient(stream: TcpStream, handler: (req: AppHttpRequest) => AppH
 }
 
 export function serve(address: string, handler: (req: AppHttpRequest) => AppHttpResponse): void {
-    let listener: TcpListener = net.listen(address);
+    let listener: TcpListener;
+    try {
+        listener = net.listen(address);
+    } catch (err) {
+        if (address.startsWith("0.0.0.0:")) {
+            let fallbackAddr: string = "127.0.0.1:" + address.substring(8, address.length());
+            print(colorLabel("server", "33"), "Bind to " + address + " restricted, falling back to " + fallbackAddr);
+            listener = net.listen(fallbackAddr);
+            address = fallbackAddr;
+        } else {
+            throw err;
+        }
+    }
     print(colorLabel("server", "32"), "Listening on " + address);
 
     while (true) {

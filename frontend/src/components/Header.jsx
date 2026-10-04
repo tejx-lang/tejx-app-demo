@@ -7,6 +7,7 @@ export default function Header({
   searchQuery, 
   setSearchQuery, 
   backendStatus,
+  dashboardConfig,
   onRefreshAll
 }) {
   const [currentTime, setCurrentTime] = useState(new Date().toLocaleTimeString());
@@ -18,7 +19,7 @@ export default function Header({
     return () => clearInterval(timer);
   }, []);
 
-  const categories = [
+  const defaultCategories = [
     { id: 'all', label: 'All Widgets', icon: '🌐', count: 26 },
     { id: 'travel', label: 'Travel & Environment', icon: '✈️', count: 6 },
     { id: 'finance', label: 'Finance & Crypto', icon: '📈', count: 4 },
@@ -28,6 +29,10 @@ export default function Header({
     { id: 'backend', label: 'TejX + MongoDB', icon: '⚡', count: 1 }
   ];
 
+  const categories = dashboardConfig?.categories || defaultCategories;
+  const title = dashboardConfig?.title || (import.meta.env?.VITE_APP_TITLE ? import.meta.env.VITE_APP_TITLE.split('|')[0].trim() : 'NomadOS');
+  const subtitle = dashboardConfig?.subtitle || (import.meta.env?.VITE_APP_TITLE ? (import.meta.env.VITE_APP_TITLE.split('|')[1] ? import.meta.env.VITE_APP_TITLE.split('|')[1].trim() : 'Digital Nomad Command Center') : 'Digital Nomad Command Center • Powered by Pure TejX & MongoDB');
+
   return (
     <header>
       <div className="header">
@@ -36,8 +41,8 @@ export default function Header({
             <span>⚡</span>
           </div>
           <div className="brand-info">
-            <h1>{(import.meta.env?.VITE_APP_TITLE ? import.meta.env.VITE_APP_TITLE.split('|')[0].trim() : 'NomadOS')}</h1>
-            <p>{(import.meta.env?.VITE_APP_TITLE ? (import.meta.env.VITE_APP_TITLE.split('|')[1] ? import.meta.env.VITE_APP_TITLE.split('|')[1].trim() : 'Digital Nomad Command Center') : 'Digital Nomad Command Center • 25+ Live APIs')}</p>
+            <h1>{title.includes('|') ? title.split('|')[0].trim() : title}</h1>
+            <p>{subtitle}</p>
           </div>
         </div>
 

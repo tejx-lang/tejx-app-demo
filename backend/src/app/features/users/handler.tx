@@ -96,3 +96,28 @@ export function handleDeleteUser(ctx: AppRouteContext): AppHttpResponse {
     recordAppEvent("user_deleted", "User", id);
     return jsonSuccess("User deleted successfully");
 }
+
+export function handlePatchUser(ctx: AppRouteContext): AppHttpResponse {
+    try {
+        let id: string = ctx.param("userId");
+        let state: AppState = getAppState();
+        let userVal = state.users.get(id);
+        if (userVal == None) {
+            return jsonNotFound("User not found: " + id);
+        }
+        let user: AppUser = userVal as AppUser;
+        let parsed: any = parseJson(ctx.request.body);
+
+        if (parsed["name"] != None) user.name = String(parsed["name"]);
+        if (parsed["email"] != None) user.email = String(parsed["email"]);
+        if (parsed["role"] != None) user.role = String(parsed["role"]);
+
+        recordAppEvent("user_patched", "User", id);
+
+        let out: JsonObject = objectOf({});
+        out.setObject("user", user.toJSON());
+        return jsonSuccess("User patched (partial update) successfully", out);
+    } catch (e) {
+        return jsonError("Failed to patch user: " + String(e), 400);
+    }
+}

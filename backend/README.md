@@ -55,6 +55,18 @@ backend/
 | `GET` | `/api/nomad/state` | Nomad Hub notes & saved bookmarks |
 | `POST` / `DELETE` | `/api/nomad/notes` | Create / Delete nomad note |
 | `POST` / `DELETE` | `/api/nomad/bookmarks` | Save / Remove nomad bookmark |
+| `GET` | `/api/database/status` | Real-time MongoDB connection diagnostics & troubleshooting |
+| `POST` | `/api/database/reconnect` | Trigger live reconnect / test probe to MongoDB |
+| `GET` / `POST` | `/api/dashboard/config` | Backend-driven layout, title, and customizable settings |
+| `GET` | `/api/data/*` | Backend aggregator shielding frontend from 20+ external APIs |
+
+## Environment Variables (`backend/.env`)
+
+| Variable | Default | Description |
+|---|---|---|
+| `PORT` | `8080` | Backend port to listen on (`0.0.0.0`) |
+| `MONGO_URI` | `mongodb://127.0.0.1:27017/tejx_nomad_db` | Connection URI with optional auth |
+| `EXTERNAL_UPSTREAM_URL` | `https://dummyjson.com/products/1` | Upstream service probe URL |
 
 ## Compiling & Running
 

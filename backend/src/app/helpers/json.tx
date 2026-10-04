@@ -98,7 +98,11 @@ export class JsonObject {
 
     object(key: string): Optional<JsonObject> {
         let normalized: any = normalizeObjectValue(this.values[key]);
-        if (normalized == None || typeof(normalized) != "object") {
+        if (normalized == None) {
+            return None;
+        }
+        let t: string = typeof(normalized);
+        if (t != "object" && t != "struct") {
             return None;
         }
         return new JsonObject(normalized);
@@ -149,6 +153,10 @@ export class JsonObject {
     }
 
     setArray(key: string, values: any[]): void {
+        this.values[key] = values;
+    }
+
+    setStringArray(key: string, values: string[]): void {
         this.values[key] = values;
     }
 

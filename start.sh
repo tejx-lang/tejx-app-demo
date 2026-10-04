@@ -37,7 +37,7 @@ load_env_file "$SCRIPT_DIR/.env"
 load_env_file "$SCRIPT_DIR/backend/.env"
 load_env_file "$SCRIPT_DIR/frontend/.env"
 
-BACKEND_HOST="${HOST:-127.0.0.1}"
+BACKEND_HOST="127.0.0.1"
 BACKEND_PORT="${PORT:-8080}"
 FRONTEND_PORT="${VITE_PORT:-3000}"
 

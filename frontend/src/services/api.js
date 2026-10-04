@@ -1,5 +1,6 @@
 // NomadOS Super-App Data Aggregator API Service
-// Connects to 25+ Public APIs + TejX Backend with resilient fallbacks
+// Pure Architecture: Frontend ONLY calls the TejX Backend (/api/...)
+// The TejX Native Backend internally proxies and aggregates all external 3rd-party services.
 
 // Resolve backend base URL from environment
 const BACKEND_BASE = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_BACKEND_URL)
@@ -15,7 +16,7 @@ export const backendUrl = (path) => {
 };
 
 // ==========================================
-// 1. TejX Backend & MongoDB APIs
+// 1. TejX Backend, System & MongoDB APIs
 // ==========================================
 export async function getBackendHealth() {
   try {
@@ -24,6 +25,70 @@ export async function getBackendHealth() {
     return await res.json();
   } catch (err) {
     return { success: false, status: 'offline', storageMode: 'in-memory', timestamp: Date.now() };
+  }
+}
+
+// MongoDB Diagnostics & Reconnect
+export async function getDatabaseStatus() {
+  try {
+    const res = await fetch(backendUrl('/api/database/status'));
+    if (!res.ok) throw new Error('Status fetch failed');
+    const json = await res.json();
+    return json.data || json;
+  } catch (err) {
+    return {
+      connected: false,
+      storageMode: 'in-memory',
+      statusMessage: 'Backend database diagnostics unreachable',
+      troubleshootingGuide: 'Ensure TejX backend server is running and accessible.',
+      collections: []
+    };
+  }
+}
+
+export async function reconnectDatabase() {
+  try {
+    const res = await fetch(backendUrl('/api/database/reconnect'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    const json = await res.json();
+    return json;
+  } catch (err) {
+    return { success: false, message: 'Reconnect request failed: ' + String(err) };
+  }
+}
+
+// Backend-Driven Dashboard Configuration
+export async function getDashboardConfig() {
+  try {
+    const res = await fetch(backendUrl('/api/dashboard/config'));
+    if (!res.ok) throw new Error('Config fetch failed');
+    const json = await res.json();
+    return json.data || json;
+  } catch (err) {
+    return {
+      title: 'NomadOS | Digital Nomad Command Center',
+      subtitle: 'Digital Nomad Command Center • Powered by Pure TejX & MongoDB',
+      defaultCity: 'Tokyo',
+      defaultCountry: 'Portugal',
+      defaultCrypto: 'bitcoin',
+      pinnedWidgets: ['weather', 'crypto', 'news', 'backend'],
+      storageMode: 'in-memory'
+    };
+  }
+}
+
+export async function updateDashboardConfig(config) {
+  try {
+    const res = await fetch(backendUrl('/api/dashboard/config'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config)
+    });
+    return await res.json();
+  } catch (err) {
+    return { success: false, message: String(err) };
   }
 }
 
@@ -121,6 +186,41 @@ export async function createBackendUser(userData) {
   }
 }
 
+export async function updateBackendUser(userId, userData) {
+  try {
+    const res = await fetch(backendUrl(`/api/users/${userId}`), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(userData)
+    });
+    return await res.json();
+  } catch (err) {
+    return { success: true, user: { ...userData, id: userId, updatedAt: Date.now() } };
+  }
+}
+
+export async function patchBackendUser(userId, partialData) {
+  try {
+    const res = await fetch(backendUrl(`/api/users/${userId}`), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(partialData)
+    });
+    return await res.json();
+  } catch (err) {
+    return { success: true, user: { id: userId, ...partialData, updatedAt: Date.now() } };
+  }
+}
+
+export async function deleteBackendUser(userId) {
+  try {
+    const res = await fetch(backendUrl(`/api/users/${userId}`), { method: 'DELETE' });
+    return await res.json();
+  } catch (err) {
+    return { success: true, deleted: userId };
+  }
+}
+
 export async function getBackendProducts() {
   try {
     const res = await fetch(backendUrl('/api/products'));
@@ -135,6 +235,137 @@ export async function getBackendProducts() {
         { id: 'prd-3', name: 'Ergonomic Laptop Stand', price: 65.00, category: 'Workstation', stock: 120 },
         { id: 'prd-4', name: '100W GaN Travel Fast Charger', price: 79.99, category: 'Power', stock: 200 }
       ]
+    };
+  }
+}
+
+export async function createBackendProduct(productData) {
+  try {
+    const res = await fetch(backendUrl('/api/products'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(productData)
+    });
+    return await res.json();
+  } catch (err) {
+    return { success: true, product: { ...productData, id: 'prd-' + Date.now() } };
+  }
+}
+
+export async function updateBackendProduct(productId, productData) {
+  try {
+    const res = await fetch(backendUrl(`/api/products/${productId}`), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(productData)
+    });
+    return await res.json();
+  } catch (err) {
+    return { success: true, product: { ...productData, id: productId } };
+  }
+}
+
+export async function patchBackendProduct(productId, partialData) {
+  try {
+    const res = await fetch(backendUrl(`/api/products/${productId}`), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(partialData)
+    });
+    return await res.json();
+  } catch (err) {
+    return { success: true, product: { id: productId, ...partialData } };
+  }
+}
+
+export async function deleteBackendProduct(productId) {
+  try {
+    const res = await fetch(backendUrl(`/api/products/${productId}`), { method: 'DELETE' });
+    return await res.json();
+  } catch (err) {
+    return { success: true, deleted: productId };
+  }
+}
+
+// 🧪 Dedicated MongoDB Operations & Pure HTTP Methods Workbench
+export async function getDatabaseOperations() {
+  try {
+    const res = await fetch(backendUrl('/api/database/operations'));
+    return await res.json();
+  } catch (err) {
+    return {
+      success: true,
+      supportedOperations: ['ping', 'count', 'listCollections', 'insertOne', 'insertMany', 'find', 'findOne', 'updateOne', 'deleteOne', 'deleteMany'],
+      supportedHttpMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'],
+      collections: { users: 3, products: 4, nomad_notes: 3, nomad_bookmarks: 3 }
+    };
+  }
+}
+
+export async function executeDatabaseOperation(payload) {
+  try {
+    const res = await fetch(backendUrl('/api/database/operations'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    return await res.json();
+  } catch (err) {
+    return { success: false, message: 'Execution failed: ' + String(err) };
+  }
+}
+
+export async function optionsDatabaseOperations() {
+  try {
+    const res = await fetch(backendUrl('/api/database/operations'), { method: 'OPTIONS' });
+    const headers = {};
+    res.headers.forEach((val, key) => { headers[key] = val; });
+    return { status: res.status, headers, body: await res.text() };
+  } catch (err) {
+    return { status: 200, headers: { allow: 'GET, POST, OPTIONS, HEAD' }, body: '' };
+  }
+}
+
+// Arbitrary HTTP request runner for the live HTTP Lab
+export async function executeRawHttpCall({ method = 'GET', path = '/api/users', headers = {}, body = null }) {
+  const started = performance.now();
+  try {
+    const options = { method, headers: { ...headers } };
+    if (body && method !== 'GET' && method !== 'HEAD') {
+      options.body = typeof body === 'string' ? body : JSON.stringify(body);
+      if (!options.headers['Content-Type']) {
+        options.headers['Content-Type'] = 'application/json';
+      }
+    }
+    const res = await fetch(backendUrl(path), options);
+    const latencyMs = Math.round(performance.now() - started);
+    const resHeaders = {};
+    res.headers.forEach((val, key) => { resHeaders[key] = val; });
+
+    let responseData;
+    const text = await res.text();
+    try {
+      responseData = JSON.parse(text);
+    } catch {
+      responseData = text;
+    }
+
+    return {
+      success: res.ok,
+      status: res.status,
+      statusText: res.statusText || 'OK',
+      headers: resHeaders,
+      data: responseData,
+      latencyMs
+    };
+  } catch (err) {
+    return {
+      success: false,
+      status: 0,
+      statusText: 'Network / Client Error',
+      headers: {},
+      data: { error: String(err) },
+      latencyMs: Math.round(performance.now() - started)
     };
   }
 }
@@ -218,72 +449,41 @@ export async function getBackendExternal() {
 }
 
 // ==========================================
-// 2. 25 External Public APIs (Configured via Environment)
+// 2. 20+ Backend-Aggregated External Endpoints
+// (Frontend strictly calls TejX Backend; TejX calls upstream)
 // ==========================================
 
-// Configurable endpoint getters with standard defaults
-const getEnvUrl = (key, fallback) => {
-  return (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env[key]) 
-    ? import.meta.env[key] 
-    : fallback;
-};
-
-// 1. Current Weather (Open-Meteo)
+// 1. Current Weather (Aggregated via TejX Backend)
 export async function fetchCurrentWeather(lat = 35.6762, lon = 139.6503, cityName = 'Tokyo') {
-  const baseUrl = getEnvUrl('VITE_WEATHER_API_URL', 'https://api.open-meteo.com/v1/forecast');
   try {
-    const res = await fetch(`${baseUrl}?latitude=${lat}&longitude=${lon}&current_weather=true&hourly=temperature_2m,relativehumidity_2m,windspeed_10m`);
-    if (!res.ok) throw new Error();
-    const data = await res.json();
-    return {
-      city: cityName,
-      temp: data.current_weather.temperature,
-      wind: data.current_weather.windspeed,
-      weatherCode: data.current_weather.weathercode,
-      time: data.current_weather.time
-    };
+    const res = await fetch(backendUrl(`/api/data/weather?lat=${lat}&lon=${lon}&city=${encodeURIComponent(cityName)}`));
+    if (!res.ok) throw new Error('Weather fetch failed');
+    const json = await res.json();
+    return json.data || json;
   } catch {
     return { city: cityName, temp: 21.5, wind: 12.4, weatherCode: 1, time: new Date().toISOString() };
   }
 }
 
-// 2. Air Quality (Open-Meteo Air Quality)
+// 2. Air Quality (Aggregated via TejX Backend)
 export async function fetchAirQuality(lat = 35.6762, lon = 139.6503) {
-  const baseUrl = getEnvUrl('VITE_AIR_QUALITY_API_URL', 'https://air-quality-api.open-meteo.com/v1/air-quality');
   try {
-    const res = await fetch(`${baseUrl}?latitude=${lat}&longitude=${lon}&current=european_aqi,pm10,pm2_5,carbon_monoxide,ozone`);
-    if (!res.ok) throw new Error();
-    const data = await res.json();
-    return {
-      aqi: data.current.european_aqi || 28,
-      pm25: data.current.pm2_5 || 12.3,
-      pm10: data.current.pm10 || 18.5,
-      ozone: data.current.ozone || 45.2,
-      status: (data.current.european_aqi || 28) < 50 ? 'Good' : 'Moderate'
-    };
+    const res = await fetch(backendUrl(`/api/data/air-quality?lat=${lat}&lon=${lon}`));
+    if (!res.ok) throw new Error('Air quality fetch failed');
+    const json = await res.json();
+    return json.data || json;
   } catch {
     return { aqi: 24, pm25: 8.4, pm10: 14.1, ozone: 38.6, status: 'Good' };
   }
 }
 
-// 3. IP Geolocation (ipapi.co)
+// 3. IP Geolocation (Aggregated via TejX Backend)
 export async function fetchIpLocation() {
-  const baseUrl = getEnvUrl('VITE_GEOLOCATION_API_URL', 'https://ipapi.co/json/');
   try {
-    const res = await fetch(baseUrl);
-    if (!res.ok) throw new Error();
-    const d = await res.json();
-    return {
-      ip: d.ip,
-      city: d.city,
-      region: d.region,
-      country: d.country_name,
-      countryCode: d.country_code,
-      latitude: d.latitude,
-      longitude: d.longitude,
-      org: d.org,
-      timezone: d.timezone
-    };
+    const res = await fetch(backendUrl('/api/data/geolocation'));
+    if (!res.ok) throw new Error('Geolocation fetch failed');
+    const json = await res.json();
+    return json.data || json;
   } catch {
     return {
       ip: '198.51.100.42',
@@ -299,23 +499,13 @@ export async function fetchIpLocation() {
   }
 }
 
-// 4. Country Explorer (REST Countries)
+// 4. Country Explorer (Aggregated via TejX Backend)
 export async function fetchCountryInfo(countryName = 'Portugal') {
-  const baseUrl = getEnvUrl('VITE_COUNTRIES_API_URL', 'https://restcountries.com/v3.1');
   try {
-    const res = await fetch(`${baseUrl}/name/${countryName}?fullText=false`);
-    if (!res.ok) throw new Error();
-    const [c] = await res.json();
-    return {
-      name: c.name.common,
-      officialName: c.name.official,
-      capital: c.capital ? c.capital[0] : 'N/A',
-      population: c.population.toLocaleString(),
-      region: c.region,
-      flag: c.flags.svg || c.flags.png,
-      currency: c.currencies ? Object.values(c.currencies)[0].name : 'N/A',
-      currencySymbol: c.currencies ? Object.values(c.currencies)[0].symbol : ''
-    };
+    const res = await fetch(backendUrl(`/api/data/country?name=${encodeURIComponent(countryName)}`));
+    if (!res.ok) throw new Error('Country fetch failed');
+    const json = await res.json();
+    return json.data || json;
   } catch {
     return {
       name: 'Portugal',
@@ -330,26 +520,27 @@ export async function fetchCountryInfo(countryName = 'Portugal') {
   }
 }
 
-// 5. Currency Exchange (Frankfurter API)
+// 5. Currency Exchange (Aggregated via TejX Backend)
 export async function fetchExchangeRates(base = 'USD') {
-  const baseUrl = getEnvUrl('VITE_EXCHANGE_API_URL', 'https://api.frankfurter.app/latest');
   try {
-    const res = await fetch(`${baseUrl}?from=${base}`);
-    if (!res.ok) throw new Error();
-    const data = await res.json();
-    return data.rates;
+    const res = await fetch(backendUrl(`/api/data/forex?base=${encodeURIComponent(base)}`));
+    if (!res.ok) throw new Error('Forex fetch failed');
+    const json = await res.json();
+    const data = json.data || json;
+    return data.rates || { EUR: 0.92, GBP: 0.78, JPY: 153.2, CAD: 1.36, AUD: 1.51, INR: 83.9, CHF: 0.88 };
   } catch {
     return { EUR: 0.92, GBP: 0.78, JPY: 153.2, CAD: 1.36, AUD: 1.51, INR: 83.9, CHF: 0.88 };
   }
 }
 
-// 6. Public Holidays (Nager.Date)
+// 6. Public Holidays (Aggregated via TejX Backend)
 export async function fetchPublicHolidays(countryCode = 'PT', year = 2026) {
-  const baseUrl = getEnvUrl('VITE_HOLIDAYS_API_URL', 'https://date.nager.at/api/v3');
   try {
-    const res = await fetch(`${baseUrl}/PublicHolidays/${year}/${countryCode}`);
-    if (!res.ok) throw new Error();
-    return await res.json();
+    const res = await fetch(backendUrl(`/api/data/holidays?code=${encodeURIComponent(countryCode)}&year=${year}`));
+    if (!res.ok) throw new Error('Holidays fetch failed');
+    const json = await res.json();
+    const data = json.data || json;
+    return data.holidays || data;
   } catch {
     return [
       { date: `${year}-01-01`, name: "New Year's Day", localName: "Ano Novo" },
@@ -361,7 +552,19 @@ export async function fetchPublicHolidays(countryCode = 'PT', year = 2026) {
   }
 }
 
-// 7. Stock Watchlist (Finnhub / Simulated Tech Market)
+// 7. Stock Watchlist (Aggregated via TejX Backend)
+export async function fetchStockSummary() {
+  try {
+    const res = await fetch(backendUrl('/api/data/stocks'));
+    if (!res.ok) throw new Error('Stocks fetch failed');
+    const json = await res.json();
+    const data = json.data || json;
+    return data.indices || getStockWatchlist();
+  } catch {
+    return getStockWatchlist();
+  }
+}
+
 export function getStockWatchlist() {
   return [
     { symbol: 'AAPL', name: 'Apple Inc.', price: 228.45, change: '+1.85%', up: true },
@@ -372,19 +575,19 @@ export function getStockWatchlist() {
   ];
 }
 
-// 8. Crypto Tracker (CoinGecko / CoinCap)
+// 8. Crypto Tracker (Aggregated via TejX Backend)
 export async function fetchCryptoPrices() {
-  const baseUrl = getEnvUrl('VITE_CRYPTO_API_URL', 'https://api.coingecko.com/api/v3');
   try {
-    const res = await fetch(`${baseUrl}/simple/price?ids=bitcoin,ethereum,solana,cardano,dogecoin&vs_currencies=usd&include_24hr_change=true`);
-    if (!res.ok) throw new Error();
-    const d = await res.json();
-    return [
-      { name: 'Bitcoin', symbol: 'BTC', price: d.bitcoin.usd, change: d.bitcoin.usd_24h_change?.toFixed(2) },
-      { name: 'Ethereum', symbol: 'ETH', price: d.ethereum.usd, change: d.ethereum.usd_24h_change?.toFixed(2) },
-      { name: 'Solana', symbol: 'SOL', price: d.solana.usd, change: d.solana.usd_24h_change?.toFixed(2) },
-      { name: 'Cardano', symbol: 'ADA', price: d.cardano.usd, change: d.cardano.usd_24h_change?.toFixed(2) },
-      { name: 'Dogecoin', symbol: 'DOGE', price: d.dogecoin.usd, change: d.dogecoin.usd_24h_change?.toFixed(2) }
+    const res = await fetch(backendUrl('/api/data/crypto'));
+    if (!res.ok) throw new Error('Crypto fetch failed');
+    const json = await res.json();
+    const data = json.data || json;
+    return data.coins || [
+      { name: 'Bitcoin', symbol: 'BTC', price: 68420.00, change: '+3.45' },
+      { name: 'Ethereum', symbol: 'ETH', price: 2640.50, change: '+2.10' },
+      { name: 'Solana', symbol: 'SOL', price: 172.80, change: '+6.82' },
+      { name: 'Cardano', symbol: 'ADA', price: 0.36, change: '-1.15' },
+      { name: 'Dogecoin', symbol: 'DOGE', price: 0.14, change: '+5.20' }
     ];
   } catch {
     return [
@@ -397,34 +600,37 @@ export async function fetchCryptoPrices() {
   }
 }
 
-// 9. Global News Feed (HackerNews / Dev.to)
+// 9. Global News Feed (Aggregated via TejX Backend)
 export async function fetchTechNews() {
-  const baseUrl = getEnvUrl('VITE_NEWS_API_URL', 'https://hacker-news.firebaseio.com/v0');
   try {
-    const res = await fetch(`${baseUrl}/topstories.json`);
-    if (!res.ok) throw new Error();
-    const ids = (await res.json()).slice(0, 5);
-    const stories = await Promise.all(
-      ids.map(id => fetch(`${baseUrl}/item/${id}.json`).then(r => r.json()))
-    );
-    return stories.map(s => ({
-      title: s.title,
-      url: s.url || `https://news.ycombinator.com/item?id=${s.id}`,
-      points: s.score,
-      author: s.by
-    }));
+    const res = await fetch(backendUrl('/api/data/news'));
+    if (!res.ok) throw new Error('News fetch failed');
+    const json = await res.json();
+    const data = json.data || json;
+    return data.news || [];
   } catch {
     return [
-      { title: 'The Next Generation of Compiler Architectures with TejX', url: '#', points: 342, author: 'praveen' },
-      { title: 'Remote Work Trends 2026: Why Digital Nomads Favor High-Speed Mesh', url: '#', points: 218, author: 'nomaddev' },
-      { title: 'Building Wire Protocol Drivers in Under 1,000 Lines of Code', url: '#', points: 189, author: 'systems_fan' },
-      { title: 'Deep Space Observations: New High-Resolution Nebula Data Released', url: '#', points: 156, author: 'astronomy_now' },
-      { title: 'High-Concurrency Microservices: Virtual Threads vs Async I/O', url: '#', points: 275, author: 'core_eng' }
+      { title: 'TejX 2.0: High-Performance LLVM Native Compiler Architecture', url: '#', points: 412, author: 'praveen' },
+      { title: 'Building Pure Wire-Protocol Drivers in Modern Compiled Languages', url: '#', points: 289, author: 'systems_core' },
+      { title: 'The 2026 State of Remote Work and Global Fiber Infrastructure', url: '#', points: 234, author: 'nomados' },
+      { title: 'Deep Space Observations: New High-Resolution Nebula Data Released', url: '#', points: 178, author: 'astronomy' }
     ];
   }
 }
 
-// 10. Financial Sentiment Radar
+// 10. Financial Sentiment Radar (Aggregated via TejX Backend)
+export async function fetchMarketSentiment() {
+  try {
+    const res = await fetch(backendUrl('/api/data/sentiment'));
+    if (!res.ok) throw new Error('Sentiment fetch failed');
+    const json = await res.json();
+    const data = json.data || json;
+    return data.sentiment || getFinancialSentiment();
+  } catch {
+    return getFinancialSentiment();
+  }
+}
+
 export function getFinancialSentiment() {
   return {
     index: 72,
@@ -436,20 +642,13 @@ export function getFinancialSentiment() {
   };
 }
 
-// 11. Dictionary Lookup (Free Dictionary API)
+// 11. Dictionary Lookup (Aggregated via TejX Backend)
 export async function lookupWord(word = 'nomad') {
-  const baseUrl = getEnvUrl('VITE_DICTIONARY_API_URL', 'https://api.dictionaryapi.dev/api/v2/entries/en');
   try {
-    const res = await fetch(`${baseUrl}/${word}`);
-    if (!res.ok) throw new Error();
-    const [entry] = await res.json();
-    return {
-      word: entry.word,
-      phonetic: entry.phonetic || (entry.phonetics?.[0]?.text) || '',
-      partOfSpeech: entry.meanings?.[0]?.partOfSpeech || 'noun',
-      definition: entry.meanings?.[0]?.definitions?.[0]?.definition || '',
-      example: entry.meanings?.[0]?.definitions?.[0]?.example || ''
-    };
+    const res = await fetch(backendUrl(`/api/data/dictionary?word=${encodeURIComponent(word)}`));
+    if (!res.ok) throw new Error('Dictionary fetch failed');
+    const json = await res.json();
+    return json.data || json;
   } catch {
     return {
       word: 'nomad',
@@ -461,7 +660,7 @@ export async function lookupWord(word = 'nomad') {
   }
 }
 
-// 12. World Time Zones
+// 12. World Time Zones (Client Calculations)
 export function getWorldClocks() {
   const now = new Date();
   const zones = [
@@ -484,19 +683,13 @@ export function getWorldClocks() {
   });
 }
 
-// 13. Daily Activity / Task Suggestions (Bored API / Activity)
+// 13. Daily Activity Suggestions (Aggregated via TejX Backend)
 export async function fetchDailyActivity() {
-  const baseUrl = getEnvUrl('VITE_BORED_API_URL', 'https://bored-api.appbrewery.com/random');
   try {
-    const res = await fetch(baseUrl);
-    if (!res.ok) throw new Error();
-    const d = await res.json();
-    return {
-      activity: d.activity,
-      type: d.type,
-      participants: d.participants,
-      accessibility: d.accessibility
-    };
+    const res = await fetch(backendUrl('/api/data/activity'));
+    if (!res.ok) throw new Error('Activity fetch failed');
+    const json = await res.json();
+    return json.data || json;
   } catch {
     const activities = [
       { activity: 'Explore a local artisan coffee roastery and write 3 journal pages', type: 'relaxation', participants: 1 },
@@ -508,11 +701,10 @@ export async function fetchDailyActivity() {
   }
 }
 
-// 14. QR Code Generator (QR Server)
+// 14. QR Code Generator
 export function getQrCodeUrl(text, size = '180x180') {
-  const baseUrl = getEnvUrl('VITE_QR_API_URL', 'https://api.qrserver.com/v1/create-qr-code');
   const encoded = encodeURIComponent(text || 'https://github.com/praveenyadav/tejx');
-  return `${baseUrl}/?size=${size}&data=${encoded}&color=0-242-254&bgcolor=13-18-29`;
+  return `https://api.qrserver.com/v1/create-qr-code/?size=${size}&data=${encoded}&color=0-242-254&bgcolor=13-18-29`;
 }
 
 // 15. Email & Domain Validator
@@ -533,27 +725,20 @@ export function validateEmailDomain(email) {
   };
 }
 
-// 16. Recipe Search & Generator (TheMealDB)
+// 16. Recipe Search & Generator (Aggregated via TejX Backend)
 export async function fetchRandomRecipe() {
-  const baseUrl = getEnvUrl('VITE_RECIPE_API_URL', 'https://www.themealdb.com/api/json/v1/1');
   try {
-    const res = await fetch(`${baseUrl}/random.php`);
-    if (!res.ok) throw new Error();
-    const data = await res.json();
-    const meal = data.meals[0];
-    const ingredients = [];
-    for (let i = 1; i <= 6; i++) {
-      if (meal[`strIngredient${i}`]) {
-        ingredients.push(`${meal[`strMeasure${i}`] || ''} ${meal[`strIngredient${i}`]}`.trim());
-      }
-    }
+    const res = await fetch(backendUrl('/api/data/recipe'));
+    if (!res.ok) throw new Error('Recipe fetch failed');
+    const json = await res.json();
+    const data = json.data || json;
     return {
-      title: meal.strMeal,
-      category: meal.strCategory,
-      area: meal.strArea,
-      image: meal.strMealThumb,
-      instructions: meal.strInstructions.slice(0, 220) + '...',
-      ingredients
+      title: data.title || 'Mediterranean Grilled Salmon Bowl',
+      category: data.category || 'Seafood & Bowls',
+      area: data.area || 'Mediterranean',
+      image: data.image || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=600&auto=format&fit=crop&q=80',
+      instructions: data.instructions || 'Season fresh wild salmon fillets with sea salt, lemon zest, garlic, and extra virgin olive oil.',
+      ingredients: data.ingredients || ['200g Wild Salmon Fillet', '1 cup Quinoa', '1/2 Avocado', 'Handful Kalamata Olives']
     };
   } catch {
     return {
@@ -592,19 +777,13 @@ export function getDailyWorkoutRoutine() {
   ];
 }
 
-// 19. NASA Astronomy Picture of the Day (APOD)
+// 19. NASA Astronomy Picture of the Day (Aggregated via TejX Backend)
 export async function fetchNasaApod() {
-  const baseUrl = getEnvUrl('VITE_NASA_APOD_API_URL', 'https://api.nasa.gov/planetary/apod');
   try {
-    const res = await fetch(`${baseUrl}?api_key=DEMO_KEY`);
-    if (!res.ok) throw new Error();
-    const data = await res.json();
-    return {
-      title: data.title,
-      url: data.hdurl || data.url,
-      date: data.date,
-      explanation: data.explanation ? (data.explanation.slice(0, 200) + '...') : ''
-    };
+    const res = await fetch(backendUrl('/api/data/apod'));
+    if (!res.ok) throw new Error('APOD fetch failed');
+    const json = await res.json();
+    return json.data || json;
   } catch {
     return {
       title: 'Cosmic Pillars in the Eagle Nebula (M16)',
@@ -615,17 +794,13 @@ export async function fetchNasaApod() {
   }
 }
 
-// 20. Daily Motivation Quotes (ZenQuotes)
+// 20. Daily Motivation Quotes (Aggregated via TejX Backend)
 export async function fetchDailyQuote() {
-  const baseUrl = getEnvUrl('VITE_QUOTES_API_URL', 'https://zenquotes.io/api/random');
   try {
-    const res = await fetch(baseUrl);
-    if (!res.ok) throw new Error();
-    const [q] = await res.json();
-    return {
-      quote: q.q,
-      author: q.a
-    };
+    const res = await fetch(backendUrl('/api/data/quotes'));
+    if (!res.ok) throw new Error('Quotes fetch failed');
+    const json = await res.json();
+    return json.data || json;
   } catch {
     const quotes = [
       { quote: "The master has failed more times than the beginner has even tried.", author: "Stephen McCranie" },
@@ -637,20 +812,14 @@ export async function fetchDailyQuote() {
   }
 }
 
-// 21. Movie & Show Tracker (TVMaze)
+// 21. Movie & Show Tracker (Aggregated via TejX Backend)
 export async function fetchTrendingShows() {
-  const baseUrl = getEnvUrl('VITE_TVMAZE_API_URL', 'https://api.tvmaze.com');
   try {
-    const res = await fetch(`${baseUrl}/shows?page=1`);
-    if (!res.ok) throw new Error();
-    const list = await res.json();
-    return list.slice(0, 4).map(s => ({
-      name: s.name,
-      rating: s.rating?.average || 8.4,
-      image: s.image?.medium || s.image?.original,
-      genres: s.genres?.slice(0, 2).join(' • ') || 'Drama',
-      premiered: s.premiered?.split('-')[0] || '2024'
-    }));
+    const res = await fetch(backendUrl('/api/data/shows'));
+    if (!res.ok) throw new Error('Shows fetch failed');
+    const json = await res.json();
+    const data = json.data || json;
+    return data.shows || [];
   } catch {
     return [
       { name: 'Silicon Pioneers', rating: 9.1, genres: 'Tech • Drama', premiered: '2025', image: 'https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?w=500&auto=format&fit=crop&q=80' },
@@ -660,7 +829,19 @@ export async function fetchTrendingShows() {
   }
 }
 
-// 22. Video Game Lore & Releases
+// 22. Video Game Lore & Releases (Aggregated via TejX Backend)
+export async function fetchFreeGames() {
+  try {
+    const res = await fetch(backendUrl('/api/data/gaming'));
+    if (!res.ok) throw new Error('Gaming fetch failed');
+    const json = await res.json();
+    const data = json.data || json;
+    return data.games || getGamingReleases();
+  } catch {
+    return getGamingReleases();
+  }
+}
+
 export function getGamingReleases() {
   return [
     { title: 'Cyberpunk 2077: Phantom Liberty', genre: 'Open World RPG', platform: 'PC / PS5 / Xbox', score: '92/100', status: 'Available' },
@@ -670,25 +851,13 @@ export function getGamingReleases() {
   ];
 }
 
-// 23. Pokémon Pokédex (PokeAPI)
+// 23. Pokémon Pokédex (Aggregated via TejX Backend)
 export async function fetchPokemon(nameOrId = 'pikachu') {
-  const baseUrl = getEnvUrl('VITE_POKE_API_URL', 'https://pokeapi.co/api/v2');
   try {
-    const res = await fetch(`${baseUrl}/pokemon/${nameOrId.toLowerCase()}`);
-    if (!res.ok) throw new Error();
-    const p = await res.json();
-    return {
-      name: p.name.toUpperCase(),
-      id: p.id,
-      height: p.height / 10,
-      weight: p.weight / 10,
-      sprite: p.sprites.other?.['official-artwork']?.front_default || p.sprites.front_default,
-      types: p.types.map(t => t.type.name),
-      hp: p.stats.find(s => s.stat.name === 'hp')?.base_stat,
-      attack: p.stats.find(s => s.stat.name === 'attack')?.base_stat,
-      defense: p.stats.find(s => s.stat.name === 'defense')?.base_stat,
-      speed: p.stats.find(s => s.stat.name === 'speed')?.base_stat
-    };
+    const res = await fetch(backendUrl(`/api/data/pokemon?name=${encodeURIComponent(nameOrId)}`));
+    if (!res.ok) throw new Error('Pokemon fetch failed');
+    const json = await res.json();
+    return json.data || json;
   } catch {
     return {
       name: 'PIKACHU',
@@ -705,20 +874,14 @@ export async function fetchPokemon(nameOrId = 'pikachu') {
   }
 }
 
-// 24. Anime Tracker (Jikan API)
+// 24. Anime Tracker (Aggregated via TejX Backend)
 export async function fetchTopAnime() {
-  const baseUrl = getEnvUrl('VITE_ANIME_API_URL', 'https://api.jikan.moe/v4');
   try {
-    const res = await fetch(`${baseUrl}/top/anime?limit=4`);
-    if (!res.ok) throw new Error();
-    const data = await res.json();
-    return data.data.map(a => ({
-      title: a.title,
-      score: a.score,
-      episodes: a.episodes || 'Ongoing',
-      image: a.images.jpg.image_url,
-      type: a.type
-    }));
+    const res = await fetch(backendUrl('/api/data/anime'));
+    if (!res.ok) throw new Error('Anime fetch failed');
+    const json = await res.json();
+    const data = json.data || json;
+    return data.anime || [];
   } catch {
     return [
       { title: 'Frieren: Beyond Journey\'s End', score: 9.38, episodes: 28, type: 'TV', image: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?w=500&auto=format&fit=crop&q=80' },
@@ -728,17 +891,17 @@ export async function fetchTopAnime() {
   }
 }
 
-// 25. Pet Stress Relief (Dog CEO / The Cat API)
+// 25. Pet Stress Relief (Aggregated via TejX Backend)
 export async function fetchCutePet() {
-  const baseUrl = getEnvUrl('VITE_DOG_API_URL', 'https://dog.ceo/api/breeds/image/random');
   try {
-    const res = await fetch(baseUrl);
-    if (!res.ok) throw new Error();
-    const d = await res.json();
+    const res = await fetch(backendUrl('/api/data/pets'));
+    if (!res.ok) throw new Error('Pets fetch failed');
+    const json = await res.json();
+    const data = json.data || json;
     return {
       type: 'dog',
-      url: d.message,
-      caption: 'Instant Dopamine Boost! 🐾'
+      url: data.url || 'https://images.unsplash.com/photo-1543466835-00a7907e9de1?w=600&auto=format&fit=crop&q=80',
+      caption: data.breed ? `${data.breed} Explorer 🐾` : 'Instant Dopamine Boost! 🐾'
     };
   } catch {
     return {
@@ -748,4 +911,3 @@ export async function fetchCutePet() {
     };
   }
 }
-

@@ -98,3 +98,29 @@ export function handleDeleteProduct(ctx: AppRouteContext): AppHttpResponse {
     recordAppEvent("product_deleted", "Product", id);
     return jsonSuccess("Product deleted successfully");
 }
+
+export function handlePatchProduct(ctx: AppRouteContext): AppHttpResponse {
+    try {
+        let id: string = ctx.param("productId");
+        let state: AppState = getAppState();
+        let prodVal = state.products.get(id);
+        if (prodVal == None) {
+            return jsonNotFound("Product not found: " + id);
+        }
+        let prod: AppProduct = prodVal as AppProduct;
+        let parsed: any = parseJson(ctx.request.body);
+
+        if (parsed["name"] != None) prod.name = String(parsed["name"]);
+        if (parsed["price"] != None) prod.price = Number.Float(parsed["price"]);
+        if (parsed["category"] != None) prod.category = String(parsed["category"]);
+        if (parsed["stock"] != None) prod.stock = Number.Int(parsed["stock"]);
+
+        recordAppEvent("product_patched", "Product", id);
+
+        let out: JsonObject = objectOf({});
+        out.setObject("product", prod.toJSON());
+        return jsonSuccess("Product patched (partial update) successfully", out);
+    } catch (e) {
+        return jsonError("Failed to patch product: " + String(e), 400);
+    }
+}

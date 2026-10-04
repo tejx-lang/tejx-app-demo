@@ -7,7 +7,7 @@ import {
     resolveMongoUri 
 } from "./config/env.tx";
 import { createMongoConnectionFromUri, connectMongo, MongoDatabase } from "../../../mongo-sdk/src/index.tx";
-import { configureDatabaseConnection } from "./core/persistence.tx";
+import { configureDatabaseConnection, setMongoDatabase } from "./core/persistence.tx";
 import { AppState, setAppState } from "./core/state.tx";
 import { loadAppStateFromMongoOrSeed } from "./core/store.tx";
 import { initializeAppRouter, handleAppRequest } from "./router/runtime.tx";
@@ -30,9 +30,11 @@ export function runApplication(): void {
         let db: MongoDatabase = connectMongo(conn);
         db.ping();
         client = db;
+        setMongoDatabase(client);
         configureDatabaseConnection(conn, true);
         print(colorLabel("mongo", "32"), "MongoDB connection verified successfully! Using persistent DB storage.");
     } catch (err) {
+        setMongoDatabase(None);
         configureDatabaseConnection(conn, false);
         print(colorLabel("storage", "33"), "MongoDB unreachable (" + String(err) + "). Activated in-memory fallback.");
     }

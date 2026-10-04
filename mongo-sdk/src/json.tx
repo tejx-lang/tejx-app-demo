@@ -162,7 +162,11 @@ export class MongoJsonObject {
 
     object(key: string): Optional<MongoJsonObject> {
         let normalized: any = normalizeObjectValue(this.values[key]);
-        if (normalized == None || typeof(normalized) != "object") {
+        if (normalized == None) {
+            return None;
+        }
+        let t: string = typeof(normalized);
+        if (t != "object" && t != "struct") {
             return None;
         }
         return new MongoJsonObject(normalized);
@@ -222,6 +226,10 @@ export class MongoJsonObject {
     }
 
     setInt(key: string, value: int): void {
+        this.values[key] = value;
+    }
+
+    setFloat(key: string, value: float): void {
         this.values[key] = value;
     }
 

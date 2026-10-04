@@ -1,7 +1,7 @@
 // Mongo wire-protocol client. This module owns message framing, authentication, and command execution.
 import std:net;
 import std:binary;
-import { buildScramContinue, buildScramStart, binaryPayloadToText, generateScramNonce, validateScramFinal } from "./auth.tx";
+import { buildScramContinue, buildScramStart, binaryPayloadToText, generateScramNonce, validateScramFinal, base64Encode } from "./auth.tx";
 import { decodeDocumentFromReader, encodeDocument, encodeDocumentWithKeys, bsonBinary } from "./bson.tx";
 import { MongoConnectionConfig } from "./config.tx";
 import { MongoJsonObject, objectOf } from "./json.tx";
@@ -417,7 +417,8 @@ export class MongoClient {
         startOptions.setBool("skipEmptyExchange", true);
         let startFields: MongoJsonObject = objectOf({});
         startFields.setString("mechanism", "SCRAM-SHA-256");
-        startFields.setObject("payload", bsonBinary(binary.fromString(start.string("message"))));
+        let startBytes: int[] = binary.fromString(start.string("message"));
+        startFields.setObject("payload", bsonBinary(startBytes));
         startFields.setInt("autoAuthorize", 1);
         startFields.setObject("options", startOptions);
         let startResponse: MongoJsonObject = this.sendCommandOnStream(stream, orderedIntCommand("saslStart", 1, startFields, ["mechanism", "payload", "autoAuthorize", "options"]), authDatabase);
@@ -434,7 +435,8 @@ export class MongoClient {
 
         let continueFields: MongoJsonObject = objectOf({});
         continueFields.setInt("conversationId", conversationId);
-        continueFields.setObject("payload", bsonBinary(binary.fromString(next.string("message"))));
+        let continueBytes: int[] = binary.fromString(next.string("message"));
+        continueFields.setObject("payload", bsonBinary(continueBytes));
         let continueResponse: MongoJsonObject = this.sendCommandOnStream(stream, orderedIntCommand("saslContinue", 1, continueFields, ["conversationId", "payload"]), authDatabase);
 
         let continuePayloadValue: Optional<MongoJsonObject> = continueResponse.object("payload");
@@ -593,6 +595,59 @@ export class MongoClient {
             orderedStringCommand("delete", collection, commandFields, ["deletes"]),
             stableText(this.databaseNameValue)
         );
+    }
+
+    deleteMany(collection: string, filter: MongoJsonObject): MongoJsonObject {
+        let deleteDocument: MongoJsonObject = objectOf({});
+        deleteDocument.setObject("q", filter);
+        deleteDocument.setInt("limit", 0);
+        let commandFields: MongoJsonObject = objectOf({});
+        commandFields.setObjectArray("deletes", [deleteDocument]);
+        return this.runCommand(
+            orderedStringCommand("delete", collection, commandFields, ["deletes"]),
+            stableText(this.databaseNameValue)
+        );
+    }
+
+    insertMany(collection: string, documents: MongoJsonObject[]): MongoJsonObject {
+        let docsWithIds: MongoJsonObject[] = [];
+        for (let i: int = 0; i < documents.length(); i++) {
+            docsWithIds.push(withDocumentId(documents[i]));
+        }
+        let commandFields: MongoJsonObject = objectOf({});
+        commandFields.setObjectArray("documents", docsWithIds);
+        return this.runCommand(
+            orderedStringCommand("insert", collection, commandFields, ["documents"]),
+            stableText(this.databaseNameValue)
+        );
+    }
+
+    count(collection: string, filter: MongoJsonObject): int {
+        let commandFields: MongoJsonObject = objectOf({});
+        commandFields.setObject("query", filter);
+        let res: MongoJsonObject = this.runCommand(
+            orderedStringCommand("count", collection, commandFields, ["query"]),
+            stableText(this.databaseNameValue)
+        );
+        return res.int("n");
+    }
+
+    listCollections(): string[] {
+        let command: MongoJsonObject = orderedIntCommand("listCollections", 1);
+        let response: MongoJsonObject = this.runCommand(command, stableText(this.databaseNameValue));
+        let cursorValue: Optional<MongoJsonObject> = response.object("cursor");
+        if (cursorValue == None) {
+            return [];
+        }
+        let batch: MongoJsonObject[] = (cursorValue as MongoJsonObject).objectArray("firstBatch");
+        let names: string[] = [];
+        for (let i: int = 0; i < batch.length(); i++) {
+            let item: MongoJsonObject = batch[i];
+            if (item.has("name")) {
+                names.push(item.string("name"));
+            }
+        }
+        return names;
     }
 
     close(): void {
