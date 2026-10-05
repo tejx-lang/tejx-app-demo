@@ -8,7 +8,6 @@ import { AppUser } from "../features/users/model.tx";
 import { AppProduct } from "../features/products/model.tx";
 import { AppOrder } from "../features/orders/model.tx";
 import { AppEvent } from "../features/events/model.tx";
-import { NomadNote, NomadBookmark } from "../features/nomad/model.tx";
 
 export function recordAppEvent(action: string, entity: string, entityId: string): void {
     let state: AppState = getAppState();
@@ -28,70 +27,6 @@ export function recordAppEvent(action: string, entity: string, entityId: string)
             db.insertOne("events", doc);
         } catch (e) {
             // Keep going if write fails
-        }
-    }
-}
-
-export function persistNomadNote(note: NomadNote): void {
-    let state: AppState = getAppState();
-    if (state.client != None) {
-        try {
-            let db: MongoDatabase = state.client as MongoDatabase;
-            let doc: MongoJsonObject = new MongoJsonObject({});
-            doc.setString("id", note.id);
-            doc.setString("title", note.title);
-            doc.setString("content", note.content);
-            doc.setString("category", note.category);
-            doc.setInt("createdAt", note.createdAt as int);
-            db.insertOne("nomad_notes", doc);
-        } catch (e) {
-            print("[mongo-err] Failed to persist note to MongoDB: " + String(e));
-        }
-    }
-}
-
-export function deleteNomadNoteFromDb(id: string): void {
-    let state: AppState = getAppState();
-    if (state.client != None) {
-        try {
-            let db: MongoDatabase = state.client as MongoDatabase;
-            let filter: MongoJsonObject = new MongoJsonObject({});
-            filter.setString("id", id);
-            db.deleteOne("nomad_notes", filter);
-        } catch (e) {
-            print("[mongo-err] Failed to delete note from MongoDB: " + String(e));
-        }
-    }
-}
-
-export function persistNomadBookmark(bm: NomadBookmark): void {
-    let state: AppState = getAppState();
-    if (state.client != None) {
-        try {
-            let db: MongoDatabase = state.client as MongoDatabase;
-            let doc: MongoJsonObject = new MongoJsonObject({});
-            doc.setString("id", bm.id);
-            doc.setString("type", bm.type);
-            doc.setString("title", bm.title);
-            doc.setString("data", bm.data);
-            doc.setInt("createdAt", bm.createdAt as int);
-            db.insertOne("nomad_bookmarks", doc);
-        } catch (e) {
-            print("[mongo-err] Failed to persist bookmark to MongoDB: " + String(e));
-        }
-    }
-}
-
-export function deleteNomadBookmarkFromDb(id: string): void {
-    let state: AppState = getAppState();
-    if (state.client != None) {
-        try {
-            let db: MongoDatabase = state.client as MongoDatabase;
-            let filter: MongoJsonObject = new MongoJsonObject({});
-            filter.setString("id", id);
-            db.deleteOne("nomad_bookmarks", filter);
-        } catch (e) {
-            print("[mongo-err] Failed to delete bookmark from MongoDB: " + String(e));
         }
     }
 }
@@ -190,40 +125,6 @@ export function seedInitialData(state: AppState): void {
     state.orders.add(o1.id, o1);
     state.orders.add(o2.id, o2);
 
-    // 4. Initial Nomad Notes
-    let n1 = new NomadNote(
-        "note-1",
-        "Chiang Mai Coworking Spaces",
-        "Punspace Nimman & Yellow Coworking have 300Mbps fiber and 24/7 access.",
-        "Travel",
-        t
-    );
-    let n2 = new NomadNote(
-        "note-2",
-        "Portugal D8 Digital Nomad Visa",
-        "Requires proof of remote income (~3,280 EUR/mo) and NIF registration.",
-        "Visa",
-        t
-    );
-    let n3 = new NomadNote(
-        "note-3",
-        "Tokyo Coffee & WiFi Cafes",
-        "Fuglen Shibuya and Blue Bottle Roppongi are great for morning deep work.",
-        "Productivity",
-        t
-    );
-    state.notes.add(n1.id, n1);
-    state.notes.add(n2.id, n2);
-    state.notes.add(n3.id, n3);
-
-    // 5. Initial Bookmarks
-    let b1 = new NomadBookmark("bm-1", "country", "Japan", "{\"code\":\"JP\",\"capital\":\"Tokyo\"}", t);
-    let b2 = new NomadBookmark("bm-2", "crypto", "Bitcoin (BTC)", "{\"symbol\":\"btc\",\"target\":75000}", t);
-    let b3 = new NomadBookmark("bm-3", "country", "Switzerland", "{\"code\":\"CH\",\"capital\":\"Bern\"}", t);
-    state.bookmarks.add(b1.id, b1);
-    state.bookmarks.add(b2.id, b2);
-    state.bookmarks.add(b3.id, b3);
-
     // Persist seed data to MongoDB if connected
     if (state.client != None) {
         persistUser(u1);
@@ -234,12 +135,6 @@ export function seedInitialData(state: AppState): void {
         persistProduct(p3);
         persistProduct(p4);
         persistProduct(p5);
-        persistNomadNote(n1);
-        persistNomadNote(n2);
-        persistNomadNote(n3);
-        persistNomadBookmark(b1);
-        persistNomadBookmark(b2);
-        persistNomadBookmark(b3);
     }
 
     recordAppEvent("system_boot", "System", "core-init");
@@ -251,20 +146,6 @@ export function loadAppStateFromMongoOrSeed(client: Optional<MongoDatabase>): Ap
     if (client != None) {
         try {
             let db: MongoDatabase = client as MongoDatabase;
-            let existingNotes = db.find("nomad_notes", new MongoJsonObject({}));
-            if (existingNotes.length() > 0) {
-                // Load persisted notes
-                for (let i = 0; i < existingNotes.length(); i++) {
-                    let d = existingNotes[i];
-                    let note = new NomadNote(
-                        d.string("id"),
-                        d.string("title"),
-                        d.string("content"),
-                        d.string("category"),
-                        d.int("createdAt") as int64
-                    );
-                    state.notes.add(note.id, note);
-                }
 
                 // Load persisted users
                 let existingUsers = db.find("users", new MongoJsonObject({}));
@@ -295,9 +176,8 @@ export function loadAppStateFromMongoOrSeed(client: Optional<MongoDatabase>): Ap
                     state.products.add(p.id, p);
                 }
 
-                recordAppEvent("mongo_hydrated", "Database", "loaded_collections");
-                return state;
-            }
+            recordAppEvent("mongo_hydrated", "Database", "loaded_collections");
+            return state;
         } catch (e) {
             print("[warn] MongoDB read failed (" + String(e) + "). Falling back to initial seed.");
         }

@@ -75,8 +75,9 @@ export function getMongoDiagnostics(): JsonObject {
             "users",
             "products",
             "orders",
-            "nomad_notes",
-            "nomad_bookmarks",
+            "marketplace_products",
+            "marketplace_orders",
+            "outbox_events",
             "events",
             "dashboard_config",
             "external_cache"

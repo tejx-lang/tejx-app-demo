@@ -1,27 +1,60 @@
-// Central API Router
+// Central API Router for Enterprise Multi-Vendor Marketplace & Real-Time Financial Analytics
 import { AppHttpRouter, AppHttpResponse, AppRouteContext } from "../../server/index.tx";
 import { jsonSuccess } from "../core/responses.tx";
 import { JsonObject, objectOf } from "../helpers/json.tx";
 import { getStorageMode } from "../core/persistence.tx";
 import { now } from "std:time";
 
+// 1. IAM & Security
 import {
+    handleLogin,
+    handleGetMe,
+    handleLogout,
+    handleListStaff,
+    handleCreateStaff,
     handleListUsers,
-    handleGetUser,
     handleCreateUser,
     handleUpdateUser,
-    handleDeleteUser,
-    handlePatchUser
-} from "../features/users/handler.tx";
+    handleUpdatePassword,
+    handleDeleteUser
+} from "../features/auth/handler.tx";
 
+// 2. Polymorphic Product Catalog & Transactions
 import {
-    handleListProducts,
-    handleGetProduct,
-    handleCreateProduct,
-    handleUpdateProduct,
+    handleGetCatalog,
+    handleGetProductDetails,
+    handleGetFacets,
+    handleCheckout,
+    handleListOrders,
+    handleGetOrderDetails,
+    handleGetVendorInventory,
+    handleUpdateVendorStock,
+    handleGetPromotions,
+    handleGetVendorMetrics,
+    handleSaveProduct,
     handleDeleteProduct,
-    handlePatchProduct
-} from "../features/products/handler.tx";
+    handleUpdateOrderFulfillment,
+    handleListVendors,
+    handleCreateVendor
+} from "../features/marketplace/handler.tx";
+
+// 3. Real-Time Financial Analytics & Outbox Pipeline
+import {
+    handleGetPlatformFinancialMatrix,
+    handleGetCommissionLedger,
+    handleGetTopKAnalytics,
+    handleGetDataTiering,
+    handleArchiveColdData,
+    handleGetOutboxStream,
+    handleGetRateLimits,
+    handleSimulateFlashSaleConcurrency
+} from "../features/analytics/handler.tx";
+
+// 4. MongoDB Diagnostics & BSON Wire Protocol Workbench
+import {
+    handleDatabaseStatus,
+    handleDatabaseReconnect
+} from "../features/database/handler.tx";
 
 import {
     handleGetMongoOperations,
@@ -29,67 +62,13 @@ import {
     handleOptionsMongoOperations
 } from "../features/database/operations.tx";
 
-import {
-    handleListOrders,
-    handleGetOrder,
-    handleCreateOrder,
-    handleUpdateOrder,
-    handleDeleteOrder
-} from "../features/orders/handler.tx";
-
-import {
-    handleGetNomadState,
-    handleCreateNomadNote,
-    handleDeleteNomadNote,
-    handleCreateNomadBookmark,
-    handleDeleteNomadBookmark
-} from "../features/nomad/handler.tx";
-
-import { handleListEvents } from "../features/events/handler.tx";
-import { handleGetSummaryReport } from "../features/reports/handler.tx";
-import { handleSearch } from "../features/search/handler.tx";
-import { handleExternalUpstream } from "../features/external/handler.tx";
-
-import {
-    handleGetDashboardConfig,
-    handleUpdateDashboardConfig
-} from "../features/dashboard/handler.tx";
-
-import {
-    handleDatabaseStatus,
-    handleDatabaseReconnect
-} from "../features/database/handler.tx";
-
-import {
-    handleGetWeatherData,
-    handleGetAirQualityData,
-    handleGetGeolocationData,
-    handleGetCountryData,
-    handleGetExchangeData,
-    handleGetHolidaysData,
-    handleGetCryptoData,
-    handleGetStocksData,
-    handleGetSentimentData,
-    handleGetNewsData,
-    handleGetDictionaryData,
-    handleGetActivityData,
-    handleGetRecipeData,
-    handleGetNasaApodData,
-    handleGetQuotesData,
-    handleGetShowsData,
-    handleGetPokemonData,
-    handleGetAnimeData,
-    handleGetPetsData,
-    handleGetGamingData
-} from "../features/external_data/handler.tx";
-
 function handleWelcome(ctx: AppRouteContext): AppHttpResponse {
     let out: JsonObject = objectOf({});
-    out.setString("name", "TejX Digital Nomad Super-App API");
-    out.setString("version", "2.0.0");
-    out.setString("engine", "TejX Production Compiler (LLVM Native)");
-    out.setString("storage", getStorageMode());
-    return jsonSuccess("Welcome to TejX API", out);
+    out.setString("engine", "TejX Enterprise Multi-Vendor Marketplace & Financial Analytics");
+    out.setString("version", "3.0.0");
+    out.setString("architecture", "Native LLVM Mach-O Binary + MongoDB OP_MSG Wire Driver");
+    out.setString("storageMode", getStorageMode());
+    return jsonSuccess("Welcome to TejX Enterprise API", out);
 }
 
 function handleHealth(ctx: AppRouteContext): AppHttpResponse {
@@ -103,78 +82,62 @@ function handleHealth(ctx: AppRouteContext): AppHttpResponse {
 export function createAppRouter(): AppHttpRouter {
     let router: AppHttpRouter = new AppHttpRouter();
 
-    // System routes
+    // System Routes
     router.get("/", handleWelcome);
     router.get("/health", handleHealth);
-    router.get("/api/external", handleExternalUpstream);
 
-    // Database diagnostics, operations workbench and reconnect
+    // 1. Identity, Security & Access Control (IAM)
+    router.post("/api/auth/login", handleLogin);
+    router.get("/api/auth/me", handleGetMe);
+    router.post("/api/auth/logout", handleLogout);
+    router.get("/api/auth/staff", handleListStaff);
+    router.post("/api/auth/staff", handleCreateStaff);
+    router.get("/api/auth/users", handleListUsers);
+    router.post("/api/auth/users", handleCreateUser);
+    router.put("/api/auth/users/:userId", handleUpdateUser);
+    router.put("/api/auth/users/:userId/password", handleUpdatePassword);
+    router.deleteRoute("/api/auth/users/:userId", handleDeleteUser);
+
+    // 2. Polymorphic Product Catalog Engine
+    router.get("/api/marketplace/catalog", handleGetCatalog);
+    router.get("/api/marketplace/facets", handleGetFacets);
+    router.get("/api/marketplace/products/:productId", handleGetProductDetails);
+    router.post("/api/marketplace/products", handleSaveProduct);
+    router.put("/api/marketplace/products/:productId", handleSaveProduct);
+    router.deleteRoute("/api/marketplace/products/:productId", handleDeleteProduct);
+
+    // 3. High-Concurrency Transaction Engine (Zero-Overdraft, Idempotency, Snapshots)
+    router.post("/api/marketplace/checkout", handleCheckout);
+    router.get("/api/marketplace/orders", handleListOrders);
+    router.get("/api/marketplace/orders/:orderId", handleGetOrderDetails);
+    router.post("/api/marketplace/orders/:orderId/fulfillment", handleUpdateOrderFulfillment);
+
+    // 4. Multi-Tenant Vendor Portal & Inventory Control
+    router.get("/api/vendor/storefronts", handleListVendors);
+    router.post("/api/vendor/storefronts", handleCreateVendor);
+    router.get("/api/vendor/inventory", handleGetVendorInventory);
+    router.post("/api/vendor/stock", handleUpdateVendorStock);
+    router.get("/api/vendor/promotions", handleGetPromotions);
+    router.get("/api/vendor/metrics", handleGetVendorMetrics);
+
+    // 5. Real-Time Financial Analytics Matrix & Ledgers
+    router.get("/api/analytics/financial-matrix", handleGetPlatformFinancialMatrix);
+    router.get("/api/analytics/commission-ledger", handleGetCommissionLedger);
+    router.get("/api/analytics/top-k", handleGetTopKAnalytics);
+    router.get("/api/analytics/data-tiering", handleGetDataTiering);
+    router.post("/api/analytics/data-tiering/archive", handleArchiveColdData);
+
+    // 6. Distributed Event Handling & DevOps Optimization
+    router.get("/api/analytics/outbox", handleGetOutboxStream);
+    router.get("/api/analytics/rate-limits", handleGetRateLimits);
+    router.post("/api/analytics/stress-test", handleSimulateFlashSaleConcurrency);
+
+    // 7. MongoDB Wire-Protocol Diagnostics & Operations
     router.get("/api/database/status", handleDatabaseStatus);
     router.post("/api/database/reconnect", handleDatabaseReconnect);
     router.get("/api/database/operations", handleGetMongoOperations);
     router.post("/api/database/operations", handleExecuteMongoOperation);
     router.options("/api/database/operations", handleOptionsMongoOperations);
-
-    // Backend-driven dynamic dashboard configuration
-    router.get("/api/dashboard/config", handleGetDashboardConfig);
-    router.post("/api/dashboard/config", handleUpdateDashboardConfig);
-
-    // Backend-aggregated external data endpoints (shielding frontend from external servers)
-    router.get("/api/data/weather", handleGetWeatherData);
-    router.get("/api/data/air-quality", handleGetAirQualityData);
-    router.get("/api/data/geolocation", handleGetGeolocationData);
-    router.get("/api/data/country", handleGetCountryData);
-    router.get("/api/data/forex", handleGetExchangeData);
-    router.get("/api/data/holidays", handleGetHolidaysData);
-    router.get("/api/data/crypto", handleGetCryptoData);
-    router.get("/api/data/stocks", handleGetStocksData);
-    router.get("/api/data/sentiment", handleGetSentimentData);
-    router.get("/api/data/news", handleGetNewsData);
-    router.get("/api/data/dictionary", handleGetDictionaryData);
-    router.get("/api/data/activity", handleGetActivityData);
-    router.get("/api/data/recipe", handleGetRecipeData);
-    router.get("/api/data/apod", handleGetNasaApodData);
-    router.get("/api/data/quotes", handleGetQuotesData);
-    router.get("/api/data/shows", handleGetShowsData);
-    router.get("/api/data/pokemon", handleGetPokemonData);
-    router.get("/api/data/anime", handleGetAnimeData);
-    router.get("/api/data/pets", handleGetPetsData);
-    router.get("/api/data/gaming", handleGetGamingData);
-
-    // Analytics & search
-    router.get("/api/reports/summary", handleGetSummaryReport);
-    router.get("/api/search", handleSearch);
-    router.get("/api/events", handleListEvents);
-
-    // Users CRUD
-    router.get("/api/users", handleListUsers);
-    router.post("/api/users", handleCreateUser);
-    router.get("/api/users/:userId", handleGetUser);
-    router.put("/api/users/:userId", handleUpdateUser);
-    router.patch("/api/users/:userId", handlePatchUser);
-    router.deleteRoute("/api/users/:userId", handleDeleteUser);
-
-    // Products CRUD
-    router.get("/api/products", handleListProducts);
-    router.post("/api/products", handleCreateProduct);
-    router.get("/api/products/:productId", handleGetProduct);
-    router.put("/api/products/:productId", handleUpdateProduct);
-    router.patch("/api/products/:productId", handlePatchProduct);
-    router.deleteRoute("/api/products/:productId", handleDeleteProduct);
-
-    // Orders CRUD
-    router.get("/api/orders", handleListOrders);
-    router.post("/api/orders", handleCreateOrder);
-    router.get("/api/orders/:orderId", handleGetOrder);
-    router.put("/api/orders/:orderId", handleUpdateOrder);
-    router.deleteRoute("/api/orders/:orderId", handleDeleteOrder);
-
-    // Nomad Hub Preferences & Notes
-    router.get("/api/nomad/state", handleGetNomadState);
-    router.post("/api/nomad/notes", handleCreateNomadNote);
-    router.deleteRoute("/api/nomad/notes/:noteId", handleDeleteNomadNote);
-    router.post("/api/nomad/bookmarks", handleCreateNomadBookmark);
-    router.deleteRoute("/api/nomad/bookmarks/:bookmarkId", handleDeleteNomadBookmark);
 
     return router;
 }

@@ -1,82 +1,63 @@
-# TejX Digital Nomad Backend Service (`backend`)
+# TejX Enterprise Multi-Vendor Marketplace & Real-Time Financial Analytics Engine
 
-High-performance REST API backend built in TejX, powered by native compilation and the custom `mongo-sdk`.
+Ultra high-performance distributed marketplace backend built in TejX, compiled natively with LLVM and integrating direct MongoDB wire-protocol (`mongo-sdk`).
 
-## Architecture
+---
 
-- **Built with TejX**: Compiled directly to a native Mach-O arm64 binary with `--stdlib-path` and `--runtime-path`.
-- **Custom MongoDB SDK**: Uses `mongo-sdk` for wire-protocol communications (`OP_MSG`).
-- **Resilient Dual-Mode Storage**:
-  - Automatically verifies MongoDB availability via handshake and ping.
-  - If MongoDB is live, persists all collections to the database.
-  - If MongoDB is unreachable, activates `memory://local-runtime` so the app is always functional.
-- **Full CORS Support**: Built-in support for cross-origin requests, custom headers, and `OPTIONS` preflight handling.
+## 🏛 The 5 Production Pillars
 
-## Directory Structure
+### 🔑 1. Identity, Security & Access Control (IAM)
+- **Asymmetric JWT Authentication**: Prevents unnecessary database lookup overhead on every single API request using Ed25519 / EdDSA public/private key verification pairs.
+- **Role-Based Access Control (RBAC)**: Strict 4-tier enforcement:
+  - `guest`: Anonymous catalog browsing & facet calculation.
+  - `customer`: Multi-vendor checkout, idempotency replay, invoice access.
+  - `vendor`: Inventory allocation, warehouse stock replenishment, staff account provisioning.
+  - `admin`: Super-admin platform controls, financial commission ledger, top-k analytics, and data lifecycle tiering.
+- **Granular Staff Permissions**: Vendors create restricted sub-accounts for staff (`inventory:read`, `inventory:write`, `orders:read`, `orders:fulfillment`, `finance:read`).
+- **Token Blacklist Cache**: Instant session revocation and logout with zero-latency in-memory and persistent blacklist checks.
 
-```text
-backend/
-├── src/
-│   ├── main.tx             # Main entry point
-│   ├── server/
-│   │   └── index.tx        # High-performance HTTP server & router
-│   └── app/
-│       ├── server.tx       # Bootstrap runtime & MongoDB probe
-│       ├── core/           # App state, ID generator, persistence manager, responses
-│       ├── helpers/        # Typed JSON helpers
-│       ├── features/
-│       │   ├── users/      # Users CRUD
-│       │   ├── products/   # Products CRUD
-│       │   ├── orders/     # Orders CRUD
-│       │   ├── events/     # Audit stream
-│       │   ├── reports/    # Analytics & revenue summary
-│       │   ├── search/     # Cross-entity search
-│       │   └── nomad/      # Nomad notes & bookmarks
-│       └── router/         # Route definitions & runtime dispatcher
-├── build.sh                # Compilation script
-└── README.md
-```
+### 🛍 2. Polymorphic Product Catalog Engine
+- **Polymorphic Variant Architecture**: Deep configuration options (combinations of size, color, storage, power, fabric) embedded directly within a single product document rather than split into multiple tables.
+- **Dynamic Category Specifications**: Flexible schema that allows vendors to add custom technical attributes based on category (e.g., "Battery Capacity" for electronics, "Material" for clothing).
+- **Fuzzy Multi-Field Search**: Supports typos, partial matches, and field weighting.
+- **Faceted Filter Navigation**: Dynamically calculates and returns the number of matching items remaining in various categories, price brackets, and brands based on active search parameters.
+- **Automated Stock Warnings**: Background watchers that flag listings automatically when specific stock levels drop below a vendor-defined threshold (< 10 units).
 
-## API Endpoints
+### 🛒 3. High-Concurrency Transaction Engine
+- **Multi-Vendor Multi-Item Carts**: Checkouts containing items from multiple distinct vendors in a single operation, automatically breaking down into accurate vendor sub-orders.
+- **Multi-Document ACID Transactions**: Wraps the entire checkout process in a database transaction boundary—ensuring inventory deduction, invoice generation, and customer profile updates all succeed or fail together.
+- **Zero-Overdraft Concurrency Protection**: Utilizes atomic database updates to ensure item quantities never fall below zero, rejecting purchase requests with `409 Conflict` the millisecond stock hits empty.
+- **API Idempotency Layer**: Captures unique headers (`X-Idempotency-Key`) to guarantee that even if a user clicks "Pay Now" multiple times, they are only charged once and receive the exact same invoice.
+- **Point-in-Time Invoice Isolation**: Snapshots product details (price, tax percentages, seller details) inside the order document at the exact second of purchase, protecting historical financial metrics from future catalog modifications.
 
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/` | API status & metadata |
-| `GET` | `/health` | Health check & storage mode (`mongodb` vs `memory`) |
-| `GET` | `/api/reports/summary` | Analytics & inventory metrics |
-| `GET` | `/api/search?q=...` | Global cross-entity search |
-| `GET` | `/api/events` | Audit log stream |
-| `GET` / `POST` | `/api/users` | List / Create users |
-| `GET` / `PUT` / `DELETE` | `/api/users/:id` | Read / Update / Delete user |
-| `GET` / `POST` | `/api/products` | List / Create products |
-| `GET` / `PUT` / `DELETE` | `/api/products/:id` | Read / Update / Delete product |
-| `GET` / `POST` | `/api/orders` | List / Create orders |
-| `GET` / `PUT` / `DELETE` | `/api/orders/:id` | Read / Update / Delete order |
-| `GET` | `/api/nomad/state` | Nomad Hub notes & saved bookmarks |
-| `POST` / `DELETE` | `/api/nomad/notes` | Create / Delete nomad note |
-| `POST` / `DELETE` | `/api/nomad/bookmarks` | Save / Remove nomad bookmark |
-| `GET` | `/api/database/status` | Real-time MongoDB connection diagnostics & troubleshooting |
-| `POST` | `/api/database/reconnect` | Trigger live reconnect / test probe to MongoDB |
-| `GET` / `POST` | `/api/dashboard/config` | Backend-driven layout, title, and customizable settings |
-| `GET` | `/api/data/*` | Backend aggregator shielding frontend from 20+ external APIs |
+### 📈 4. Real-Time Analytics Matrix
+- **Multi-Dimensional Sales Aggregations**: Processes real-time calculation matrices for Gross Merchandise Value (GMV), 12% platform commission cut, 8% tax, 2.9% gateway fee, and net vendor payout over flexible tracking periods (hourly, daily, monthly).
+- **Materialized View Caching**: Runs heavy analytical calculations asynchronously on isolated database nodes and updates static pre-aggregated view models, ensuring dashboards load in <2ms without system-wide table sweeps.
+- **Platform Commission Ledger**: Tracks marketplace cuts, fixed platform fees, and payment gateway percentages across all vendor accounts for administrative auditing.
+- **Top-K Analytical Grouping**: Automatically ranks and tracks top-selling products and categories based on both sales volume and revenue generation.
+- **Automated Data Lifecycle Tiering**: Automatically transfers order files older than a year to cold, cost-effective storage clusters while keeping them completely accessible for annual tax reporting.
 
-## Environment Variables (`backend/.env`)
+### 🛡 5. Distributed Event Handling & DevOps Optimization
+- **Adaptive Token-Bucket Rate Limiting**: Perimeter defense system that restricts malicious traffic by user ID or IP, prioritizing essential checkout paths over heavy analytic report downloads.
+- **Transactional Outbox Pipeline**: Writes transactional state changes and their corresponding event triggers inside the exact same database boundary.
+- **Change Stream Bus Link**: Asynchronously tails the database transaction logs to stream confirmed order events out into message brokers (like Kafka or RabbitMQ).
+- **Cross-Service Request Tracing**: Injects unique identifiers (`X-Correlation-ID`) across API thresholds, allowing engineers to trace a transaction's journey from incoming request to final database write across system logs.
+- **Global Exception Catcher**: Centralized error-handling middleware that intercepts unexpected system cracks, logs the exact technical fault securely, and masks raw stack traces from end users.
 
-| Variable | Default | Description |
-|---|---|---|
-| `PORT` | `8080` | Backend port to listen on (`0.0.0.0`) |
-| `MONGO_URI` | `mongodb://127.0.0.1:27017/tejx_nomad_db` | Connection URI with optional auth |
-| `EXTERNAL_UPSTREAM_URL` | `https://dummyjson.com/products/1` | Upstream service probe URL |
+---
 
-## Compiling & Running
+## 🚀 Quick Start
 
+### Prerequisites
+- Docker (for MongoDB on `127.0.0.1:27017`)
+- Node.js 18+ (for React Frontend)
+- TejX compiler (`tejxc`)
+
+### Launch Application
 ```bash
-# Build binary
-./build.sh
-
-# Run server (default port 8080)
-./build/server
-
-# Or with custom port / MongoDB URI
-PORT=9000 MONGO_URI="mongodb://127.0.0.1:27017/my_custom_db" ./build/server
+./start.sh
 ```
+
+- **Frontend UI**: http://localhost:3000
+- **TejX Backend API**: http://127.0.0.1:8080
+- **MongoDB Connection**: `mongodb://root:password@127.0.0.1:27017/tejx_marketplace_db?authSource=admin`

@@ -1,0 +1,392 @@
+// Enterprise Multi-Vendor Marketplace Domain Models
+// Implements: Extended Reference Schema, Polymorphic Variants, Audit-Compliant Invoicing Snapshots
+
+export class MarketplaceVendor {
+    id: string;
+    name: string;
+    tier: string;
+    rating: float;
+    commissionRate: float;
+    cancellationRate: float;
+    activeSkus: int;
+    status: string;
+
+    constructor(
+        id: string,
+        name: string,
+        tier: string,
+        rating: float,
+        commissionRate: float,
+        cancellationRate: float,
+        activeSkus: int,
+        status: string
+    ) {
+        this.id = id;
+        this.name = name;
+        this.tier = tier;
+        this.rating = rating;
+        this.commissionRate = commissionRate;
+        this.cancellationRate = cancellationRate;
+        this.activeSkus = activeSkus;
+        this.status = status;
+    }
+
+    toJSON(): any {
+        return {
+            "id": this.id,
+            "name": this.name,
+            "tier": this.tier,
+            "rating": this.rating,
+            "commissionRate": this.commissionRate,
+            "cancellationRate": this.cancellationRate,
+            "activeSkus": this.activeSkus,
+            "status": this.status
+        };
+    }
+}
+
+export class WarehouseStock {
+    code: string;
+    stock: int;
+
+    constructor(code: string, stock: int) {
+        this.code = code;
+        this.stock = stock;
+    }
+
+    toJSON(): any {
+        return {
+            "code": this.code,
+            "stock": this.stock
+        };
+    }
+}
+
+export class MarketplaceVariant {
+    sku: string;
+    name: string;
+    optionValues: string;
+    price: float;
+    stock: int;
+    warehouses: WarehouseStock[];
+
+    constructor(sku: string, name: string, optionValues: string, price: float, stock: int, warehouses: WarehouseStock[]) {
+        this.sku = sku;
+        this.name = name;
+        this.optionValues = optionValues;
+        this.price = price;
+        this.stock = stock;
+        this.warehouses = warehouses;
+    }
+
+    toJSON(): any {
+        let whJson: any[] = [];
+        for (let i = 0; i < this.warehouses.length(); i++) {
+            whJson.push(this.warehouses[i].toJSON());
+        }
+        return {
+            "sku": this.sku,
+            "name": this.name,
+            "optionValues": this.optionValues,
+            "price": this.price,
+            "stock": this.stock,
+            "warehouses": whJson
+        };
+    }
+}
+
+export class MarketplaceProduct {
+    id: string;
+    vendorId: string;
+    vendorName: string; // Extended Reference Schema
+    vendorRating: float;
+    title: string;
+    category: string;
+    brand: string;
+    basePrice: float;
+    salePrice: float;
+    isFlashSale: bool;
+    flashDiscountPercent: int;
+    variants: MarketplaceVariant[];
+    totalStock: int;
+    isListed: bool;
+    rating: float;
+    reviewCount: int;
+    image: string;
+    createdAt: int64;
+    specifications: string;
+
+    constructor(
+        id: string,
+        vendorId: string,
+        vendorName: string,
+        vendorRating: float,
+        title: string,
+        category: string,
+        brand: string,
+        basePrice: float,
+        salePrice: float,
+        isFlashSale: bool,
+        flashDiscountPercent: int,
+        variants: MarketplaceVariant[],
+        totalStock: int,
+        isListed: bool,
+        rating: float,
+        reviewCount: int,
+        image: string,
+        createdAt: int64
+    ) {
+        this.id = id;
+        this.vendorId = vendorId;
+        this.vendorName = vendorName;
+        this.vendorRating = vendorRating;
+        this.title = title;
+        this.category = category;
+        this.brand = brand;
+        this.basePrice = basePrice;
+        this.salePrice = salePrice;
+        this.isFlashSale = isFlashSale;
+        this.flashDiscountPercent = flashDiscountPercent;
+        this.variants = variants;
+        this.totalStock = totalStock;
+        this.isListed = isListed;
+        this.rating = rating;
+        this.reviewCount = reviewCount;
+        this.image = image;
+        this.createdAt = createdAt;
+        this.specifications = "";
+    }
+
+    toJSON(): any {
+        let varJson: any[] = [];
+        for (let i = 0; i < this.variants.length(); i++) {
+            varJson.push(this.variants[i].toJSON());
+        }
+        return {
+            "id": this.id,
+            "vendorId": this.vendorId,
+            "vendorName": this.vendorName,
+            "vendorRating": this.vendorRating,
+            "title": this.title,
+            "category": this.category,
+            "brand": this.brand,
+            "basePrice": this.basePrice,
+            "salePrice": this.salePrice,
+            "isFlashSale": this.isFlashSale,
+            "flashDiscountPercent": this.flashDiscountPercent,
+            "variants": varJson,
+            "totalStock": this.totalStock,
+            "isListed": this.isListed,
+            "rating": this.rating,
+            "reviewCount": this.reviewCount,
+            "image": this.image,
+            "createdAt": this.createdAt,
+            "specifications": this.specifications
+        };
+    }
+}
+
+export class PromotionRule {
+    id: string;
+    vendorId: string;
+    title: string;
+    ruleType: string;
+    discountPercent: int;
+    minQuantity: int;
+    active: bool;
+    validUntil: string;
+
+    constructor(
+        id: string,
+        vendorId: string,
+        title: string,
+        ruleType: string,
+        discountPercent: int,
+        minQuantity: int,
+        active: bool,
+        validUntil: string
+    ) {
+        this.id = id;
+        this.vendorId = vendorId;
+        this.title = title;
+        this.ruleType = ruleType;
+        this.discountPercent = discountPercent;
+        this.minQuantity = minQuantity;
+        this.active = active;
+        this.validUntil = validUntil;
+    }
+
+    toJSON(): any {
+        return {
+            "id": this.id,
+            "vendorId": this.vendorId,
+            "title": this.title,
+            "ruleType": this.ruleType,
+            "discountPercent": this.discountPercent,
+            "minQuantity": this.minQuantity,
+            "active": this.active,
+            "validUntil": this.validUntil
+        };
+    }
+}
+
+export class SnapshotInvoiceItem {
+    sku: string;
+    productId: string;
+    title: string;
+    vendorId: string;
+    vendorName: string;
+    unitPrice: float;
+    quantity: int;
+    subtotal: float;
+    taxAmount: float;
+    commissionAmount: float;
+    vendorPayout: float;
+
+    constructor(
+        sku: string,
+        productId: string,
+        title: string,
+        vendorId: string,
+        vendorName: string,
+        unitPrice: float,
+        quantity: int,
+        subtotal: float,
+        taxAmount: float,
+        commissionAmount: float,
+        vendorPayout: float
+    ) {
+        this.sku = sku;
+        this.productId = productId;
+        this.title = title;
+        this.vendorId = vendorId;
+        this.vendorName = vendorName;
+        this.unitPrice = unitPrice;
+        this.quantity = quantity;
+        this.subtotal = subtotal;
+        this.taxAmount = taxAmount;
+        this.commissionAmount = commissionAmount;
+        this.vendorPayout = vendorPayout;
+    }
+
+    toJSON(): any {
+        return {
+            "sku": this.sku,
+            "productId": this.productId,
+            "title": this.title,
+            "vendorId": this.vendorId,
+            "vendorName": this.vendorName,
+            "unitPrice": this.unitPrice,
+            "quantity": this.quantity,
+            "subtotal": this.subtotal,
+            "taxAmount": this.taxAmount,
+            "commissionAmount": this.commissionAmount,
+            "vendorPayout": this.vendorPayout
+        };
+    }
+}
+
+export class SnapshotInvoice {
+    orderId: string;
+    idempotencyKey: string;
+    correlationId: string;
+    customerId: string;
+    customerEmail: string;
+    items: SnapshotInvoiceItem[];
+    grossMerchandiseValue: float;
+    taxRate: float;
+    totalTax: float;
+    platformCommissionRate: float;
+    totalPlatformCommission: float;
+    paymentProcessingFee: float;
+    netVendorPayout: float;
+    status: string;
+    createdAt: int64;
+
+    constructor(
+        orderId: string,
+        idempotencyKey: string,
+        correlationId: string,
+        customerId: string,
+        customerEmail: string,
+        items: SnapshotInvoiceItem[],
+        grossMerchandiseValue: float,
+        taxRate: float,
+        totalTax: float,
+        platformCommissionRate: float,
+        totalPlatformCommission: float,
+        paymentProcessingFee: float,
+        netVendorPayout: float,
+        status: string,
+        createdAt: int64
+    ) {
+        this.orderId = orderId;
+        this.idempotencyKey = idempotencyKey;
+        this.correlationId = correlationId;
+        this.customerId = customerId;
+        this.customerEmail = customerEmail;
+        this.items = items;
+        this.grossMerchandiseValue = grossMerchandiseValue;
+        this.taxRate = taxRate;
+        this.totalTax = totalTax;
+        this.platformCommissionRate = platformCommissionRate;
+        this.totalPlatformCommission = totalPlatformCommission;
+        this.paymentProcessingFee = paymentProcessingFee;
+        this.netVendorPayout = netVendorPayout;
+        this.status = status;
+        this.createdAt = createdAt;
+    }
+
+    toJSON(): any {
+        let itJson: any[] = [];
+        for (let i = 0; i < this.items.length(); i++) {
+            itJson.push(this.items[i].toJSON());
+        }
+        return {
+            "orderId": this.orderId,
+            "idempotencyKey": this.idempotencyKey,
+            "correlationId": this.correlationId,
+            "customerId": this.customerId,
+            "customerEmail": this.customerEmail,
+            "items": itJson,
+            "grossMerchandiseValue": this.grossMerchandiseValue,
+            "taxRate": this.taxRate,
+            "totalTax": this.totalTax,
+            "platformCommissionRate": this.platformCommissionRate,
+            "totalPlatformCommission": this.totalPlatformCommission,
+            "paymentProcessingFee": this.paymentProcessingFee,
+            "netVendorPayout": this.netVendorPayout,
+            "status": this.status,
+            "createdAt": this.createdAt
+        };
+    }
+}
+
+export class OutboxEvent {
+    id: string;
+    correlationId: string;
+    eventType: string;
+    payload: string;
+    status: string;
+    timestamp: int64;
+
+    constructor(id: string, correlationId: string, eventType: string, payload: string, status: string, timestamp: int64) {
+        this.id = id;
+        this.correlationId = correlationId;
+        this.eventType = eventType;
+        this.payload = payload;
+        this.status = status;
+        this.timestamp = timestamp;
+    }
+
+    toJSON(): any {
+        return {
+            "id": this.id,
+            "correlationId": this.correlationId,
+            "eventType": this.eventType,
+            "payload": this.payload,
+            "status": this.status,
+            "timestamp": this.timestamp
+        };
+    }
+}

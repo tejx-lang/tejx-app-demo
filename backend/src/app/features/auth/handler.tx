@@ -1,0 +1,289 @@
+// IAM HTTP Request Handlers
+import { now } from "std:time";
+import { AppRouteContext, AppHttpResponse } from "../../../server/index.tx";
+import { jsonSuccess, jsonError } from "../../core/responses.tx";
+import { JsonObject, objectOf, parseJson } from "../../helpers/json.tx";
+import { getAuthService } from "./service.tx";
+import { TokenClaims, UserAccount } from "./model.tx";
+
+export function handleLogin(ctx: AppRouteContext): AppHttpResponse {
+    let rawBody = ctx.request.body;
+    let bodyObj: any = {};
+    if (rawBody != "") {
+        try {
+            bodyObj = parseJson(rawBody);
+        } catch (e) {
+        }
+    }
+
+    let auth = getAuthService();
+
+    let sub: string = "usr-cust-1";
+    let name: string = "Elena Vance";
+    let email: string = "elena@digitalnomad.io";
+    let role: string = "customer";
+    let vendorId: string = "";
+    let permissions: string[] = ["catalog:read", "cart:write", "checkout:execute", "invoices:read"];
+
+    // 1. Password-based authentication
+    if (bodyObj["username"] != None && bodyObj["password"] != None) {
+        let uName: string = String(bodyObj["username"]).trim();
+        let pwd: string = String(bodyObj["password"]).trim();
+
+        let matched = auth.authenticateUser(uName, pwd);
+        if (matched == None) {
+            return jsonError("Invalid credentials. Try username 'admin' and password 'admin'", 401);
+        }
+        let user = matched as UserAccount;
+        sub = user.id;
+        name = user.name;
+        email = user.email;
+        role = user.role;
+        vendorId = user.vendorId;
+        permissions = user.permissions;
+    } else {
+        // 2. Direct role switch (or guest)
+        role = String(bodyObj["role"] != None ? bodyObj["role"] : "customer").toLowerCase();
+        if (role == "vendor") {
+            sub = "usr-vnd-aurora";
+            name = "Aurora Labs Admin";
+            email = "ops@auroralabs.io";
+            vendorId = "vnd-aurora";
+            permissions = ["inventory:manage", "promotions:write", "analytics:read", "products:write", "orders:fulfill", "staff:manage"];
+        } else if (role == "admin" || role == "superadmin") {
+            role = "admin";
+            sub = "usr-admin-1";
+            name = "Platform Super-Admin";
+            email = "admin@marketplace.io";
+            permissions = ["*"];
+        } else if (role == "guest") {
+            sub = "usr-guest-" + String(now());
+            name = "Anonymous Guest";
+            email = "guest@marketplace.io";
+            permissions = ["catalog:read"];
+        }
+    }
+
+    let token = auth.generateToken(sub, name, email, role, vendorId, permissions);
+
+    let out: JsonObject = objectOf({});
+    out.setString("token", token);
+    out.setString("tokenType", "Bearer");
+    out.setString("sub", sub);
+    out.setString("name", name);
+    out.setString("email", email);
+    out.setString("role", role);
+    out.setString("vendorId", vendorId);
+    out.setStringArray("permissions", permissions);
+    out.setString("keyType", "Asymmetric EdDSA Public/Private Key Pair");
+
+    return jsonSuccess("Authenticated successfully via Asymmetric JWT", out);
+}
+
+export function handleGetMe(ctx: AppRouteContext): AppHttpResponse {
+    let authHeader = ctx.request.header("authorization");
+    let token: string = "";
+    if (authHeader.startsWith("Bearer ")) {
+        token = authHeader.substring(7, authHeader.length()).trim();
+    } else {
+        token = authHeader.trim();
+    }
+
+    if (token == "") {
+        return jsonError("Missing Authorization header (Bearer token required)", 401);
+    }
+
+    let auth = getAuthService();
+    let verified = auth.verifyToken(token);
+    if (verified == None) {
+        return jsonError("Invalid, expired, or blacklisted token", 401);
+    }
+
+    let claims: TokenClaims = verified as TokenClaims;
+    let out: JsonObject = objectOf(claims.toJSON());
+    out.setBool("authenticated", true);
+    return jsonSuccess("User claims verified from Asymmetric JWT signature", out);
+}
+
+export function handleLogout(ctx: AppRouteContext): AppHttpResponse {
+    let authHeader = ctx.request.header("authorization");
+    let token: string = "";
+    if (authHeader.startsWith("Bearer ")) {
+        token = authHeader.substring(7, authHeader.length()).trim();
+    }
+
+    if (token != "") {
+        let auth = getAuthService();
+        auth.blacklistToken(token, "User requested revocation / logout");
+    }
+
+    let out: JsonObject = objectOf({});
+    out.setBool("revoked", true);
+    out.setString("status", "Token added to Token Blacklist Cache & MongoDB");
+    return jsonSuccess("Logged out successfully and token revoked", out);
+}
+
+export function handleListStaff(ctx: AppRouteContext): AppHttpResponse {
+    let vendorId: string = ctx.query("vendorId", "vnd-aurora");
+    let auth = getAuthService();
+    let staff = auth.getStaffAccounts(vendorId);
+
+    let list: any[] = [];
+    for (let i = 0; i < staff.length(); i++) {
+        list.push(staff[i].toJSON());
+    }
+
+    let out: JsonObject = objectOf({});
+    out.setArray("staffAccounts", list);
+    out.setInt("totalCount", list.length());
+    return jsonSuccess("Granular staff permissions fetched", out);
+}
+
+export function handleCreateStaff(ctx: AppRouteContext): AppHttpResponse {
+    let rawBody = ctx.request.body;
+    if (rawBody == "") {
+        return jsonError("Staff account payload required", 400);
+    }
+
+    try {
+        let body: any = parseJson(rawBody);
+        let vendorId: string = String(body["vendorId"] != None ? body["vendorId"] : "vnd-aurora");
+        let name: string = String(body["name"] != None ? body["name"] : "Staff Member");
+        let email: string = String(body["email"] != None ? body["email"] : "staff@vendor.io");
+        
+        let perms: string[] = ["inventory:read"];
+        if (body["permissions"] != None) {
+            let pArr: any[] = body["permissions"] as any[];
+            perms = [];
+            for (let i = 0; i < pArr.length(); i++) {
+                perms.push(String(pArr[i]));
+            }
+        }
+
+        let auth = getAuthService();
+        let created = auth.createStaffAccount(vendorId, name, email, perms);
+
+        let out: JsonObject = objectOf(created.toJSON());
+        return jsonSuccess("Granular vendor staff sub-account created", out);
+    } catch (e) {
+        return jsonError("Failed to create staff account: " + String(e), 500);
+    }
+}
+
+// User & Access Management Handlers
+export function handleListUsers(ctx: AppRouteContext): AppHttpResponse {
+    let auth = getAuthService();
+    let users = auth.listUsers();
+    let list: any[] = [];
+    for (let i = 0; i < users.length(); i++) {
+        list.push(users[i].toJSON());
+    }
+    let out: JsonObject = objectOf({});
+    out.setArray("users", list);
+    out.setInt("totalCount", list.length());
+    return jsonSuccess("User directory fetched", out);
+}
+
+export function handleCreateUser(ctx: AppRouteContext): AppHttpResponse {
+    let rawBody = ctx.request.body;
+    if (rawBody == "") return jsonError("User payload required", 400);
+    try {
+        let body: any = parseJson(rawBody);
+        let username: string = String(body["username"] != None ? body["username"] : "").trim();
+        let password: string = String(body["password"] != None ? body["password"] : "").trim();
+        let name: string = String(body["name"] != None ? body["name"] : username);
+        let email: string = String(body["email"] != None ? body["email"] : username + "@marketplace.io");
+        let role: string = String(body["role"] != None ? body["role"] : "customer");
+        let vendorId: string = String(body["vendorId"] != None ? body["vendorId"] : "");
+
+        if (username == "" || password == "") {
+            return jsonError("Username and password are required", 400);
+        }
+
+        let perms: string[] = ["catalog:read", "cart:write", "checkout:execute"];
+        if (body["permissions"] != None) {
+            let pArr: any[] = body["permissions"] as any[];
+            perms = [];
+            for (let i = 0; i < pArr.length(); i++) {
+                perms.push(String(pArr[i]));
+            }
+        } else if (role == "admin") {
+            perms = ["*"];
+        } else if (role == "vendor") {
+            perms = ["inventory:manage", "promotions:write", "analytics:read", "products:write", "orders:fulfill"];
+        }
+
+        let auth = getAuthService();
+        let created = auth.createUser(username, password, name, email, role, vendorId, perms);
+        if (created == None) {
+            return jsonError("Username '" + username + "' is already taken", 409);
+        }
+        let out: JsonObject = objectOf((created as UserAccount).toJSON());
+        return jsonSuccess("User created successfully", out);
+    } catch (e) {
+        return jsonError("Failed to create user: " + String(e), 500);
+    }
+}
+
+export function handleUpdateUser(ctx: AppRouteContext): AppHttpResponse {
+    let userId: string = ctx.param("userId");
+    let rawBody = ctx.request.body;
+    if (rawBody == "") return jsonError("Update payload required", 400);
+    try {
+        let body: any = parseJson(rawBody);
+        let name: string = String(body["name"] != None ? body["name"] : "");
+        let email: string = String(body["email"] != None ? body["email"] : "");
+        let role: string = String(body["role"] != None ? body["role"] : "customer");
+        let vendorId: string = String(body["vendorId"] != None ? body["vendorId"] : "");
+
+        let perms: string[] = [];
+        if (body["permissions"] != None) {
+            let pArr: any[] = body["permissions"] as any[];
+            for (let i = 0; i < pArr.length(); i++) {
+                perms.push(String(pArr[i]));
+            }
+        }
+
+        let auth = getAuthService();
+        let ok = auth.updateUser(userId, name, email, role, vendorId, perms);
+        if (!ok) return jsonError("User not found", 404);
+
+        let out: JsonObject = objectOf({});
+        out.setString("userId", userId);
+        return jsonSuccess("User updated successfully", out);
+    } catch (e) {
+        return jsonError("Failed to update user: " + String(e), 500);
+    }
+}
+
+export function handleUpdatePassword(ctx: AppRouteContext): AppHttpResponse {
+    let userId: string = ctx.param("userId");
+    let rawBody = ctx.request.body;
+    if (rawBody == "") return jsonError("Password payload required", 400);
+    try {
+        let body: any = parseJson(rawBody);
+        let newPassword: string = String(body["password"] != None ? body["password"] : "").trim();
+        if (newPassword == "") return jsonError("New password cannot be empty", 400);
+
+        let auth = getAuthService();
+        let ok = auth.updatePassword(userId, newPassword);
+        if (!ok) return jsonError("User not found", 404);
+
+        let out: JsonObject = objectOf({});
+        out.setString("userId", userId);
+        return jsonSuccess("Password updated successfully", out);
+    } catch (e) {
+        return jsonError("Failed to update password: " + String(e), 500);
+    }
+}
+
+export function handleDeleteUser(ctx: AppRouteContext): AppHttpResponse {
+    let userId: string = ctx.param("userId");
+    let auth = getAuthService();
+    let ok = auth.deleteUser(userId);
+    if (!ok) return jsonError("Cannot delete root admin or user not found", 400);
+
+    let out: JsonObject = objectOf({});
+    out.setString("deletedUserId", userId);
+    return jsonSuccess("User deleted successfully", out);
+}

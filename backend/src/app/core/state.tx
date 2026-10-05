@@ -5,7 +5,6 @@ import { AppUser } from "../features/users/model.tx";
 import { AppProduct } from "../features/products/model.tx";
 import { AppOrder } from "../features/orders/model.tx";
 import { AppEvent } from "../features/events/model.tx";
-import { NomadNote, NomadBookmark } from "../features/nomad/model.tx";
 
 export class EntityCollection<T> {
     items: Map<string, T>;
@@ -61,8 +60,6 @@ export class AppState {
     products: EntityCollection<AppProduct>;
     orders: EntityCollection<AppOrder>;
     events: EntityCollection<AppEvent>;
-    notes: EntityCollection<NomadNote>;
-    bookmarks: EntityCollection<NomadBookmark>;
 
     constructor(client: Optional<MongoDatabase> = None) {
         this.client = client;
@@ -70,8 +67,6 @@ export class AppState {
         this.products = new EntityCollection<AppProduct>();
         this.orders = new EntityCollection<AppOrder>();
         this.events = new EntityCollection<AppEvent>();
-        this.notes = new EntityCollection<NomadNote>();
-        this.bookmarks = new EntityCollection<NomadBookmark>();
     }
 }
 

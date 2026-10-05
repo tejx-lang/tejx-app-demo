@@ -6,6 +6,7 @@ import { getMongoDatabase, getStorageMode, isMongoActive } from "../../core/pers
 import { getAppState, AppState } from "../../core/state.tx";
 import { MongoDatabase } from "../../../../../mongo-sdk/src/index.tx";
 import { MongoJsonObject } from "../../../../../mongo-sdk/src/json.tx";
+import { AppProduct } from "../products/model.tx";
 import { now } from "std:time";
 
 export function handleGetMongoOperations(ctx: AppRouteContext): AppHttpResponse {
@@ -37,8 +38,6 @@ export function handleGetMongoOperations(ctx: AppRouteContext): AppHttpResponse 
     counts.setInt("users", state.users.all().length());
     counts.setInt("products", state.products.all().length());
     counts.setInt("orders", state.orders.all().length());
-    counts.setInt("nomad_notes", state.notes.all().length());
-    counts.setInt("nomad_bookmarks", state.bookmarks.all().length());
     counts.setInt("events", state.events.all().length());
     out.setObject("documentCounts", counts.toJSON());
 
@@ -54,7 +53,7 @@ export function handleExecuteMongoOperation(ctx: AppRouteContext): AppHttpRespon
         }
         let parsed: any = parseJson(bodyRaw);
         let op: string = String(parsed["op"] != None ? parsed["op"] : "ping").toLowerCase();
-        let collection: string = String(parsed["collection"] != None ? parsed["collection"] : "nomad_notes");
+        let collection: string = String(parsed["collection"] != None ? parsed["collection"] : "products");
 
         let maybeDb = getMongoDatabase();
         let isLive: bool = isMongoActive() && maybeDb != None;
@@ -97,7 +96,7 @@ export function handleExecuteMongoOperation(ctx: AppRouteContext): AppHttpRespon
                 if (collection == "users") countVal = state.users.all().length();
                 else if (collection == "products") countVal = state.products.all().length();
                 else if (collection == "orders") countVal = state.orders.all().length();
-                else countVal = state.notes.all().length();
+                else countVal = state.events.all().length();
             }
             out.setInt("count", countVal);
             if (dbError != "") {
@@ -105,7 +104,7 @@ export function handleExecuteMongoOperation(ctx: AppRouteContext): AppHttpRespon
             }
             out.setString("result", "Counted " + String(countVal) + " documents in " + collection);
         } else if (op == "listcollections") {
-            let names: string[] = ["users", "products", "orders", "nomad_notes", "nomad_bookmarks", "events", "dashboard_config"];
+            let names: string[] = ["users", "products", "orders", "marketplace_products", "marketplace_orders", "outbox_events", "events", "dashboard_config"];
             if (isLive) {
                 try {
                     let db: MongoDatabase = maybeDb as MongoDatabase;
@@ -153,8 +152,8 @@ export function handleExecuteMongoOperation(ctx: AppRouteContext): AppHttpRespon
             out.setString("result", "Batch inserted " + String(docsRaw.length()) + " documents into " + collection);
         } else if (op == "findone") {
             let state: AppState = getAppState();
-            let allNotes = state.notes.all();
-            let sample: any = allNotes.length() > 0 ? allNotes[0].toJSON() : { id: "sample", title: "Note Sample" };
+            let allProducts: AppProduct[] = state.products.all();
+            let sample: any = allProducts.length() > 0 ? allProducts[0].toJSON() : { id: "sample", name: "Product Sample" };
             if (isLive) {
                 try {
                     let db: MongoDatabase = maybeDb as MongoDatabase;
@@ -171,10 +170,10 @@ export function handleExecuteMongoOperation(ctx: AppRouteContext): AppHttpRespon
             out.setString("result", "Found single document in " + collection);
         } else if (op == "find") {
             let state: AppState = getAppState();
-            let allNotes = state.notes.all();
+            let allProducts: AppProduct[] = state.products.all();
             let list: any[] = [];
-            for (let i = 0; i < allNotes.length(); i++) {
-                list.push(allNotes[i].toJSON());
+            for (let i: int = 0; i < allProducts.length(); i++) {
+                list.push(allProducts[i].toJSON());
             }
             if (isLive) {
                 try {

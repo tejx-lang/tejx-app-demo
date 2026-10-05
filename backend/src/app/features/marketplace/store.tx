@@ -1,0 +1,321 @@
+import { now } from "std:time";
+import { Map } from "std:collections";
+import { getMongoDatabase, isMongoActive } from "../../core/persistence.tx";
+import { MongoDatabase } from "../../../../../mongo-sdk/src/index.tx";
+import { MongoJsonObject } from "../../../../../mongo-sdk/src/json.tx";
+import {
+    MarketplaceVendor,
+    MarketplaceProduct,
+    MarketplaceVariant,
+    WarehouseStock,
+    PromotionRule,
+    SnapshotInvoice,
+    SnapshotInvoiceItem,
+    OutboxEvent
+} from "./model.tx";
+
+class MarketplaceStore {
+    vendors: Map<string, MarketplaceVendor>;
+    vendorIds: string[];
+    products: Map<string, MarketplaceProduct>;
+    productIds: string[];
+    promotions: Map<string, PromotionRule>;
+    invoices: Map<string, SnapshotInvoice>; // key: orderId
+    idempotencyMap: Map<string, SnapshotInvoice>; // key: idempotencyKey
+    outbox: OutboxEvent[];
+    orderCounter: int;
+
+    constructor() {
+        this.vendors = new Map<string, MarketplaceVendor>();
+        this.vendorIds = [];
+        this.products = new Map<string, MarketplaceProduct>();
+        this.productIds = [];
+        this.promotions = new Map<string, PromotionRule>();
+        this.invoices = new Map<string, SnapshotInvoice>();
+        this.idempotencyMap = new Map<string, SnapshotInvoice>();
+        this.outbox = [];
+        this.orderCounter = 100;
+        this.seedInitial();
+    }
+
+    addVendor(vendor: MarketplaceVendor): void {
+        this.vendors.set(vendor.id, vendor);
+        let exists: bool = false;
+        for (let i = 0; i < this.vendorIds.length(); i++) {
+            if (this.vendorIds[i] == vendor.id) {
+                exists = true;
+                break;
+            }
+        }
+        if (!exists) {
+            this.vendorIds.push(vendor.id);
+        }
+    }
+
+    private seedInitial(): void {
+        let t: int64 = now();
+
+        // 1. Vendors
+        let v1 = new MarketplaceVendor("vnd-aurora", "Aurora Labs", "Verified Platinum", 4.96, 0.12, 0.008, 24, "active");
+        let v2 = new MarketplaceVendor("vnd-zenith", "Zenith Systems", "Gold Merchant", 4.88, 0.12, 0.015, 16, "active");
+        let v3 = new MarketplaceVendor("vnd-hyper", "HyperGear Global", "Verified Platinum", 4.92, 0.12, 0.011, 32, "active");
+        this.addVendor(v1);
+        this.addVendor(v2);
+        this.addVendor(v3);
+
+        // 2. Products with Polymorphic Variants & Warehouses
+        let p1Variants: MarketplaceVariant[] = [
+            new MarketplaceVariant(
+                "SKU-SLM-100W",
+                "Starlink Mini Roam (100W DC)",
+                "Power: 100W DC, Dish: Ultra-Compact",
+                599.00,
+                75,
+                [new WarehouseStock("WH-US-EAST", 45), new WarehouseStock("WH-EU-WEST", 30)]
+            ),
+            new MarketplaceVariant(
+                "SKU-SLM-200W",
+                "Starlink Mini High-Performance (200W Dual-Feed)",
+                "Power: 200W Dual-Feed, Dish: High-Gain Array",
+                899.00,
+                35,
+                [new WarehouseStock("WH-US-EAST", 20), new WarehouseStock("WH-EU-WEST", 15)]
+            )
+        ];
+        let p1 = new MarketplaceProduct(
+            "mp-starlink-roam",
+            v1.id,
+            v1.name,
+            v1.rating,
+            "Starlink Mini Global Roam Satellite Terminal",
+            "Connectivity",
+            "SpaceX Starlink",
+            599.00,
+            509.15,
+            true,
+            15,
+            p1Variants,
+            110,
+            true,
+            4.95,
+            428,
+            "https://images.unsplash.com/photo-1541185933-ef5d8ed016c2?w=600&auto=format&fit=crop&q=80",
+            t
+        );
+
+        let p2Variants: MarketplaceVariant[] = [
+            new MarketplaceVariant(
+                "SKU-ANC-BLK",
+                "Nomad ANC Titanium (Matte Black)",
+                "Color: Matte Obsidian, Driver: 40mm Beryllium",
+                249.00,
+                115,
+                [new WarehouseStock("WH-US-EAST", 60), new WarehouseStock("WH-EU-WEST", 55)]
+            ),
+            new MarketplaceVariant(
+                "SKU-ANC-SLV",
+                "Nomad ANC Titanium (Lunar Silver)",
+                "Color: Lunar Silver, Driver: 40mm Beryllium",
+                249.00,
+                75,
+                [new WarehouseStock("WH-US-EAST", 35), new WarehouseStock("WH-EU-WEST", 40)]
+            )
+        ];
+        let p2 = new MarketplaceProduct(
+            "mp-anc-ultra",
+            v2.id,
+            v2.name,
+            v2.rating,
+            "Nomad ANC Titanium Noise-Cancelling Headphones",
+            "Audio",
+            "Zenith Acoustic",
+            249.00,
+            199.20,
+            true,
+            20,
+            p2Variants,
+            190,
+            true,
+            4.89,
+            312,
+            "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=600&auto=format&fit=crop&q=80",
+            t
+        );
+
+        let p3Variants: MarketplaceVariant[] = [
+            new MarketplaceVariant(
+                "SKU-GAN-200W",
+                "HyperCharge 200W 4-Port GaN Multi-Country Brick",
+                "Ports: 3x USB-C + 1x USB-A, Pin: Modular Global",
+                89.00,
+                210,
+                [new WarehouseStock("WH-US-EAST", 120), new WarehouseStock("WH-EU-WEST", 90)]
+            )
+        ];
+        let p3 = new MarketplaceProduct(
+            "mp-gan-200w",
+            v3.id,
+            v3.name,
+            v3.rating,
+            "HyperCharge 200W Quad-Port GaN Travel Fast Charger",
+            "Power",
+            "HyperGear",
+            89.00,
+            75.65,
+            true,
+            15,
+            p3Variants,
+            210,
+            true,
+            4.93,
+            654,
+            "https://images.unsplash.com/photo-1583863788434-e58a36330cf0?w=600&auto=format&fit=crop&q=80",
+            t
+        );
+
+        let p4Variants: MarketplaceVariant[] = [
+            new MarketplaceVariant(
+                "SKU-STN-CRB",
+                "AeroCarbon Ergonomic Stand (Carbon Fiber)",
+                "Material: Toray 3K Carbon, Weight: 180g",
+                75.00,
+                145,
+                [new WarehouseStock("WH-US-EAST", 80), new WarehouseStock("WH-EU-WEST", 65)]
+            )
+        ];
+        let p4 = new MarketplaceProduct(
+            "mp-carbon-stand",
+            v1.id,
+            v1.name,
+            v1.rating,
+            "AeroCarbon Featherweight Foldable Laptop Stand",
+            "Workstation",
+            "Aurora Labs",
+            75.00,
+            65.00,
+            false,
+            0,
+            p4Variants,
+            145,
+            true,
+            4.85,
+            189,
+            "https://images.unsplash.com/photo-1527864550417-7fd91fc51a46?w=600&auto=format&fit=crop&q=80",
+            t
+        );
+
+        this.products.set(p1.id, p1);
+        this.products.set(p2.id, p2);
+        this.products.set(p3.id, p3);
+        this.products.set(p4.id, p4);
+        this.productIds.push(p1.id);
+        this.productIds.push(p2.id);
+        this.productIds.push(p3.id);
+        this.productIds.push(p4.id);
+
+        // 3. Promotions
+        let pr1 = new PromotionRule("promo-flash-1", "vnd-zenith", "Flash Sale: 20% Off Audio Gear", "FLASH_SALE", 20, 1, true, "2026-10-31");
+        let pr2 = new PromotionRule("promo-volume-1", "vnd-hyper", "Nomad Cohort: 15% Off 5+ GaN Chargers", "VOLUME_TIER", 15, 5, true, "2026-11-15");
+        this.promotions.set(pr1.id, pr1);
+        this.promotions.set(pr2.id, pr2);
+
+        // 4. Initial Seed Invoice Snapshot & Outbox Event
+        let seedItem = new SnapshotInvoiceItem(
+            "SKU-SLM-100W",
+            "mp-starlink-roam",
+            "Starlink Mini Global Roam Satellite Terminal",
+            "vnd-aurora",
+            "Aurora Labs",
+            509.15,
+            1,
+            509.15,
+            40.73,
+            61.10,
+            448.05
+        );
+        let seedInvoice = new SnapshotInvoice(
+            "ord-genesis-101",
+            "idemp-seed-genesis-101",
+            "corr-genesis-trace-001",
+            "usr-1",
+            "elena@digitalnomad.io",
+            [seedItem],
+            509.15,
+            0.08,
+            40.73,
+            0.12,
+            61.10,
+            14.77,
+            448.05,
+            "CONFIRMED_ATOMIC",
+            t - 3600000
+        );
+        this.invoices.set(seedInvoice.orderId, seedInvoice);
+        this.idempotencyMap.set(seedInvoice.idempotencyKey, seedInvoice);
+
+        this.appendOutbox(
+            "corr-genesis-trace-001",
+            "ORDER_CONFIRMED",
+            "{\"orderId\":\"ord-genesis-101\",\"gmv\":509.15,\"commission\":61.10,\"status\":\"CONFIRMED_ATOMIC\"}"
+        );
+    }
+
+    appendOutbox(correlationId: string, eventType: string, payload: string): OutboxEvent {
+        let evId: string = "outbox-ev-" + String(this.outbox.length() + 1);
+        let ev = new OutboxEvent(evId, correlationId, eventType, payload, "COMMITTED_ATOMIC", now());
+        this.outbox.push(ev);
+        this.persistOutboxEvent(ev);
+        return ev;
+    }
+
+    persistOutboxEvent(ev: OutboxEvent): void {
+        let maybeDb = getMongoDatabase();
+        if (isMongoActive() && maybeDb != None) {
+            try {
+                let db: MongoDatabase = maybeDb as MongoDatabase;
+                let mDoc: MongoJsonObject = new MongoJsonObject(ev.toJSON());
+                db.insertOne("outbox_events", mDoc);
+            } catch (e) {
+            }
+        }
+    }
+
+    persistInvoice(inv: SnapshotInvoice): void {
+        let maybeDb = getMongoDatabase();
+        if (isMongoActive() && maybeDb != None) {
+            try {
+                let db: MongoDatabase = maybeDb as MongoDatabase;
+                let mDoc: MongoJsonObject = new MongoJsonObject(inv.toJSON());
+                db.insertOne("marketplace_orders", mDoc);
+            } catch (e) {
+            }
+        }
+    }
+
+    persistProduct(p: MarketplaceProduct): void {
+        let maybeDb = getMongoDatabase();
+        if (isMongoActive() && maybeDb != None) {
+            try {
+                let db: MongoDatabase = maybeDb as MongoDatabase;
+                let filter: MongoJsonObject = new MongoJsonObject({ id: p.id });
+                let updateDoc: MongoJsonObject = new MongoJsonObject(p.toJSON());
+                db.updateOne("marketplace_products", filter, updateDoc);
+            } catch (e) {
+            }
+        }
+    }
+
+    nextOrderId(): string {
+        this.orderCounter = this.orderCounter + 1;
+        return "ord-flsh-" + String(this.orderCounter);
+    }
+}
+
+let globalMarketplaceStore: Optional<MarketplaceStore> = None;
+
+export function getMarketplaceStore(): MarketplaceStore {
+    if (globalMarketplaceStore == None) {
+        globalMarketplaceStore = new MarketplaceStore();
+    }
+    return globalMarketplaceStore as MarketplaceStore;
+}

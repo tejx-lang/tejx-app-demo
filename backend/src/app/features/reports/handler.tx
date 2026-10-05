@@ -30,8 +30,6 @@ export function handleGetSummaryReport(ctx: AppRouteContext): AppHttpResponse {
     out.setInt("pendingOrders", pendingOrders);
     out.setFloat("totalRevenue", revenue);
     out.setInt("totalEvents", state.events.ids.length());
-    out.setInt("totalNotes", state.notes.ids.length());
-    out.setInt("totalBookmarks", state.bookmarks.ids.length());
     out.setString("storageMode", getStorageMode());
 
     return jsonSuccess("Summary report calculated", out);

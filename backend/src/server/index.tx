@@ -1,5 +1,6 @@
 // TejX Production HTTP Server & Router with CORS support
 import std:net;
+import std:thread;
 import std:binary;
 import { stringify } from "std:json";
 import { now } from "std:time";
@@ -473,15 +474,18 @@ export function logRoute(req: AppHttpRequest, routeName: string, response: AppHt
 function processClient(stream: TcpStream, handler: (req: AppHttpRequest) => AppHttpResponse): void {
     try {
         let chunk: string = stream.read(8192);
-        if (chunk == "") {
-            return;
+        if (chunk != "") {
+            let req: AppHttpRequest = new AppHttpRequest(chunk);
+            let res: AppHttpResponse = handler(req);
+            res.send(stream);
         }
-
-        let req: AppHttpRequest = new AppHttpRequest(chunk);
-        let res: AppHttpResponse = handler(req);
-        res.send(stream);
     } catch (err) {
         print(colorLabel("error", "31"), "Request error: ", String(err));
+    } finally {
+        try {
+            stream.close();
+        } catch (closeErr) {
+        }
     }
 }
 

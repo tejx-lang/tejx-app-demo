@@ -26,12 +26,12 @@ export function handleSearch(ctx: AppRouteContext): AppHttpResponse {
         }
     }
 
-    let matchingNotes: any[] = [];
-    let notes = state.notes.all();
-    for (let i = 0; i < notes.length(); i++) {
-        let n = notes[i];
-        if (q == "" || n.title.toLowerCase().indexOf(q) >= 0 || n.content.toLowerCase().indexOf(q) >= 0) {
-            matchingNotes.push(n.toJSON());
+    let matchingOrders: any[] = [];
+    let orders = state.orders.all();
+    for (let i = 0; i < orders.length(); i++) {
+        let o = orders[i];
+        if (q == "" || o.id.toLowerCase().indexOf(q) >= 0 || o.status.toLowerCase().indexOf(q) >= 0 || o.userId.toLowerCase().indexOf(q) >= 0) {
+            matchingOrders.push(o.toJSON());
         }
     }
 
@@ -40,7 +40,7 @@ export function handleSearch(ctx: AppRouteContext): AppHttpResponse {
     out.setString("query", q);
     out.setArray("users", matchingUsers);
     out.setArray("products", matchingProducts);
-    out.setArray("notes", matchingNotes);
+    out.setArray("orders", matchingOrders);
 
     return jsonSuccess("Search results", out);
 }
