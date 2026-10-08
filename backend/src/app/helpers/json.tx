@@ -36,7 +36,28 @@ function int64Value(value: any, fallback: int64 = 0): int64 {
     if (kind == "float" || kind == "float32" || kind == "float64") {
         return (value as float) as int64;
     }
-    return Number.Int64(value);
+    if (kind == "Date" || kind == "object" || kind == "struct") {
+        let m: any = value["millis"];
+        if (m == None) m = value["value"];
+        if (m == None) m = value["timestamp"];
+        if (m != None) {
+            let mt: string = typeof(m);
+            if (mt == "int" || mt == "int32" || mt == "int64") {
+                return m as int64;
+            }
+            if (mt == "float" || mt == "float32" || mt == "float64") {
+                return (m as float) as int64;
+            }
+            return int64Value(m, fallback);
+        }
+        if (value["$date"] != None) {
+            return int64Value(value["$date"], fallback);
+        }
+        if (typeof(value["getTime"]) == "function") {
+            return value.getTime() as int64;
+        }
+    }
+    return value as int64;
 }
 
 function floatValue(value: any, fallback: float = 0.0): float {
@@ -138,6 +159,45 @@ export class JsonObject {
 
     setInt64(key: string, value: int64): void {
         this.values[key] = value;
+    }
+
+    setDate(key: string, value: any): void {
+        if (value == None) {
+            this.values[key] = None;
+            return;
+        }
+        let kind: string = typeof(value);
+        if (kind == "int" || kind == "int32" || kind == "int64") {
+            let millis: int64 = value as int64;
+            let dateObj: JsonObject = new JsonObject({});
+            dateObj.setString("_bsonType", "date");
+            dateObj.setInt64("millis", millis);
+            this.values[key] = dateObj.toJSON();
+            return;
+        }
+        if (kind == "Date" || kind == "object" || kind == "struct") {
+            if (value["_bsonType"] == "date" || value["_bsonType"] == "datetime") {
+                this.values[key] = normalizeObjectValue(value);
+                return;
+            }
+            if (value["$date"] != None) {
+                this.values[key] = normalizeObjectValue(value);
+                return;
+            }
+            if (typeof(value["getTime"]) == "function") {
+                let millis: int64 = value.getTime() as int64;
+                let dateObj: JsonObject = new JsonObject({});
+                dateObj.setString("_bsonType", "date");
+                dateObj.setInt64("millis", millis);
+                this.values[key] = dateObj.toJSON();
+                return;
+            }
+        }
+        this.values[key] = value;
+    }
+
+    date(key: string): int64 {
+        return this.int64(key);
     }
 
     setFloat(key: string, value: float): void {

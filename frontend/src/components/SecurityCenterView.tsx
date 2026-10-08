@@ -25,11 +25,11 @@ import {
   deleteUserAccount,
   fetchStorefronts,
   createStorefront,
-  fetchAuthMe,
-  revokeToken,
-  getStoredToken
+  updateStorefront,
+  deleteStorefront
 } from '../services/api';
 import { UserAccount, AuthProfile, VendorStorefront } from '../services/types';
+import { CustomDropdown } from './CustomDropdown';
 
 interface SecurityCenterViewProps {
   currentProfile: AuthProfile | null;
@@ -40,7 +40,48 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
   currentProfile,
   onProfileChange
 }) => {
-  const [activeSection, setActiveSection] = useState<'users' | 'storefronts' | 'security'>('users');
+  const getInitialSection = (): 'users' | 'storefronts' => {
+    if (typeof window === 'undefined') return 'users';
+    const params = new URLSearchParams(window.location.search);
+    const sec = (params.get('section') || params.get('subtab') || params.get('view') || '').toLowerCase();
+    if (sec === 'storefronts' || sec === 'store' || sec === 'stores' || sec === 'tenants') return 'storefronts';
+    return 'users';
+  };
+
+  const [activeSection, setActiveSectionState] = useState<'users' | 'storefronts'>(getInitialSection);
+
+  const handleSectionChange = (sec: 'users' | 'storefronts') => {
+    setActiveSectionState(sec);
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      url.searchParams.set('section', sec);
+      window.history.pushState({}, '', url.pathname + url.search + url.hash);
+    }
+  };
+
+  useEffect(() => {
+    const handlePop = () => {
+      const params = new URLSearchParams(window.location.search);
+      const sec = (params.get('section') || params.get('subtab') || params.get('view') || '').toLowerCase();
+      if (sec === 'storefronts' || sec === 'store' || sec === 'stores' || sec === 'tenants') {
+        setActiveSectionState('storefronts');
+      } else if (sec === 'users') {
+        setActiveSectionState('users');
+      }
+    };
+    window.addEventListener('popstate', handlePop);
+    return () => window.removeEventListener('popstate', handlePop);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      if (!url.searchParams.has('section')) {
+        url.searchParams.set('section', activeSection);
+        window.history.replaceState({}, '', url.pathname + url.search + url.hash);
+      }
+    }
+  }, [activeSection]);
   const [users, setUsers] = useState<UserAccount[]>([]);
   const [storefronts, setStorefronts] = useState<VendorStorefront[]>([]);
   const [loading, setLoading] = useState(true);
@@ -65,6 +106,7 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
 
   // Edit User State
   const [editingUser, setEditingUser] = useState<UserAccount | null>(null);
+  const [editUsername, setEditUsername] = useState('');
   const [editName, setEditName] = useState('');
   const [editEmail, setEditEmail] = useState('');
   const [editRole, setEditRole] = useState<'admin' | 'vendor' | 'customer'>('customer');
@@ -82,10 +124,20 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
   const [storefrontTier, setStorefrontTier] = useState('Verified Partner');
   const [isSubmittingStorefront, setIsSubmittingStorefront] = useState(false);
 
-  // Asymmetric Security State
-  const [tokenString, setTokenString] = useState<string>('');
-  const [securityMessage, setSecurityMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
+  // Edit Storefront State
+  const [editingStorefront, setEditingStorefront] = useState<VendorStorefront | null>(null);
+  const [editStorefrontName, setEditStorefrontName] = useState('');
+  const [editStorefrontTier, setEditStorefrontTier] = useState('Verified Partner');
+  const [editStorefrontStatus, setEditStorefrontStatus] = useState('active');
+  const [editStorefrontCommissionRate, setEditStorefrontCommissionRate] = useState(12);
+  const [isSubmittingEditStorefront, setIsSubmittingEditStorefront] = useState(false);
 
+  // Delete Storefront State
+  const [deletingStorefront, setDeletingStorefront] = useState<VendorStorefront | null>(null);
+  const [forceDeleteStorefront, setForceDeleteStorefront] = useState(false);
+  const [isDeletingStorefront, setIsDeletingStorefront] = useState(false);
+
+  // Permissions list
   const allAvailablePermissions = [
     { key: '*', label: 'All Super-Admin Access (*)', desc: 'Unrestricted root control' },
     { key: 'catalog:read', label: 'Browse Marketplace (catalog:read)', desc: 'View products and inventory' },
@@ -109,6 +161,9 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
       ]);
       setUsers(uList);
       setStorefronts(sList);
+      if (sList.length > 0 && !newVendorId) {
+        setNewVendorId(sList[0].id);
+      }
     } finally {
       setLoading(false);
     }
@@ -116,8 +171,6 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
 
   useEffect(() => {
     loadData();
-    const token = getStoredToken();
-    if (token) setTokenString(token);
   }, [currentProfile]);
 
   const handleRolePreset = (role: 'admin' | 'vendor' | 'customer') => {
@@ -134,7 +187,7 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
         'promotions:write',
         'analytics:read'
       ]);
-      setNewVendorId('');
+      setNewVendorId(storefronts.length > 0 ? storefronts[0].id : '');
     } else {
       setNewPermissions(['catalog:read', 'cart:write', 'checkout:execute', 'invoices:read']);
       setNewVendorId('');
@@ -193,6 +246,7 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
 
   const handleStartEdit = (u: UserAccount) => {
     setEditingUser(u);
+    setEditUsername(u.username);
     setEditName(u.name);
     setEditEmail(u.email);
     setEditRole(u.role === 'admin' ? 'admin' : u.role === 'vendor' ? 'vendor' : 'customer');
@@ -210,6 +264,7 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
     setSuccessMsg(null);
     try {
       const res = await updateUserAccount(editingUser.id, {
+        username: editUsername.trim(),
         name: editName.trim(),
         email: editEmail.trim(),
         role: editRole,
@@ -218,7 +273,16 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
       });
 
       if (res.success) {
-        setSuccessMsg(`User '${editingUser.username}' updated successfully!`);
+        setSuccessMsg(`User '${editUsername.trim()}' updated successfully!`);
+        if (currentProfile && (currentProfile.sub === editingUser.id || currentProfile.name === editingUser.name)) {
+          if (onProfileChange) {
+            onProfileChange({
+              ...currentProfile,
+              name: editName.trim(),
+              email: editEmail.trim(),
+            });
+          }
+        }
         setEditingUser(null);
         await loadData();
       } else {
@@ -301,37 +365,62 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
     }
   };
 
-  const handleVerifyToken = async () => {
+  const handleStartEditStorefront = (s: VendorStorefront) => {
+    setEditingStorefront(s);
+    setEditStorefrontName(s.name);
+    setEditStorefrontTier(s.tier || 'Verified Partner');
+    setEditStorefrontStatus(s.status || 'active');
+    setEditStorefrontCommissionRate(Math.round((s.commissionRate ?? 0.12) * 100));
+    setErrorMsg(null);
+    setSuccessMsg(null);
+  };
+
+  const handleUpdateStorefrontSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingStorefront || !editStorefrontName.trim()) return;
+    setIsSubmittingEditStorefront(true);
+    setErrorMsg(null);
+    setSuccessMsg(null);
     try {
-      const res = await fetchAuthMe();
-      if (res.success && res.data) {
-        onProfileChange(res.data);
-        setSecurityMessage({
-          text: `Verified via Asymmetric EdDSA Public Key! Subject: ${res.data.name} (${res.data.role})`,
-          type: 'success'
-        });
+      const res = await updateStorefront(editingStorefront.id, {
+        name: editStorefrontName.trim(),
+        tier: editStorefrontTier,
+        status: editStorefrontStatus,
+        commissionRate: Number(editStorefrontCommissionRate) / 100
+      });
+      if (res.success) {
+        setSuccessMsg(`Storefront tenant '${editStorefrontName}' (${editingStorefront.id}) updated successfully!`);
+        setEditingStorefront(null);
+        await loadData();
       } else {
-        setSecurityMessage({
-          text: `Verification rejected: ${res.error || 'Invalid signature or expired token'}`,
-          type: 'error'
-        });
+        setErrorMsg(res.error || 'Failed to update storefront');
       }
     } catch (err: any) {
-      setSecurityMessage({ text: err.message, type: 'error' });
+      setErrorMsg(err.message || 'Error updating storefront');
+    } finally {
+      setIsSubmittingEditStorefront(false);
     }
   };
 
-  const handleRevokeToken = async () => {
+  const handleDeleteStorefrontSubmit = async () => {
+    if (!deletingStorefront) return;
+    setIsDeletingStorefront(true);
+    setErrorMsg(null);
+    setSuccessMsg(null);
     try {
-      await revokeToken();
-      onProfileChange(null);
-      setTokenString('');
-      setSecurityMessage({
-        text: 'Session revoked. Token signature added to the server-side Blacklist Cache.',
-        type: 'info'
-      });
+      const res = await deleteStorefront(deletingStorefront.id, forceDeleteStorefront);
+      if (res.success) {
+        setSuccessMsg(`Storefront tenant '${deletingStorefront.name}' (${deletingStorefront.id}) deleted successfully.`);
+        setDeletingStorefront(null);
+        setForceDeleteStorefront(false);
+        await loadData();
+      } else {
+        setErrorMsg(res.error || 'Failed to delete storefront');
+      }
     } catch (err: any) {
-      setSecurityMessage({ text: err.message, type: 'error' });
+      setErrorMsg(err.message || 'Error deleting storefront');
+    } finally {
+      setIsDeletingStorefront(false);
     }
   };
 
@@ -344,32 +433,25 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
             Identity, Access & Security Management
           </h1>
           <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
-            Unified User Directory, Granular Permissions, Multi-Tenant Storefronts & Asymmetric EdDSA Keys
+            Unified User Directory, Granular Permissions & Multi-Tenant Storefronts
           </p>
         </div>
 
         {/* Unified Sub-Navigation */}
         <div className="segmented-nav">
           <button
-            onClick={() => setActiveSection('users')}
+            onClick={() => handleSectionChange('users')}
             className={`segmented-nav-btn ${activeSection === 'users' ? 'active' : ''}`}
           >
             <Users size={14} />
             User Directory ({users.length})
           </button>
           <button
-            onClick={() => setActiveSection('storefronts')}
+            onClick={() => handleSectionChange('storefronts')}
             className={`segmented-nav-btn ${activeSection === 'storefronts' ? 'active' : ''}`}
           >
             <Store size={14} />
             Storefront Tenants ({storefronts.length})
-          </button>
-          <button
-            onClick={() => setActiveSection('security')}
-            className={`segmented-nav-btn ${activeSection === 'security' ? 'active' : ''}`}
-          >
-            <Key size={14} />
-            EdDSA Keys & Session
           </button>
         </div>
       </div>
@@ -551,16 +633,19 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
                       <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>
                         Assigned Storefront Tenant ID
                       </label>
-                      <select
-                        className="select-custom"
+                      <CustomDropdown
                         value={newVendorId}
-                        onChange={e => setNewVendorId(e.target.value)}
-                        style={{ width: '100%', padding: '0.55rem 0.85rem' }}
-                      >
-                        {storefronts.map(s => (
-                          <option key={s.id} value={s.id}>{s.name} ({s.id})</option>
-                        ))}
-                      </select>
+                        onChange={val => setNewVendorId(val)}
+                        options={storefronts.map(s => ({
+                          value: s.id,
+                          label: s.name,
+                          sublabel: `(${s.id})`,
+                          badge: s.tier || 'Verified',
+                          badgeColor: s.tier === 'Enterprise' ? '#6366f1' : s.tier === 'Gold' ? '#eab308' : '#10b981'
+                        }))}
+                        placeholder="Select Storefront..."
+                        searchable={storefronts.length > 4}
+                      />
                     </div>
                   )}
                 </div>
@@ -632,13 +717,26 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
               }}
             >
               <h3 style={{ fontSize: '1rem', fontWeight: 800, margin: '0 0 1rem 0', color: '#92400e' }}>
-                Editing User: {editingUser.username} ({editingUser.name})
+                Editing User: @{editUsername || editingUser.username} ({editingUser.name})
               </h3>
               <form onSubmit={handleUpdateUserSubmit}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, marginBottom: 14 }}>
                   <div>
                     <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>
-                      Full Name
+                      Username *
+                    </label>
+                    <input
+                      type="text"
+                      className="input"
+                      value={editUsername}
+                      onChange={e => setEditUsername(e.target.value)}
+                      placeholder="e.g. john_ops"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>
+                      Full Name *
                     </label>
                     <input
                       type="text"
@@ -650,7 +748,7 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
                   </div>
                   <div>
                     <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>
-                      Email
+                      Email *
                     </label>
                     <input
                       type="email"
@@ -664,32 +762,35 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
                     <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>
                       Role
                     </label>
-                    <select
-                      className="select-custom"
+                    <CustomDropdown
                       value={editRole}
-                      onChange={e => setEditRole(e.target.value as any)}
-                      style={{ width: '100%', padding: '0.55rem 0.85rem' }}
-                    >
-                      <option value="admin">Platform Admin</option>
-                      <option value="vendor">Vendor</option>
-                      <option value="customer">Customer</option>
-                    </select>
+                      onChange={val => setEditRole(val as any)}
+                      options={[
+                        { value: 'admin', label: 'Platform Admin', badge: 'Full Access', badgeColor: '#ef4444' },
+                        { value: 'vendor', label: 'Vendor Merchant', badge: 'Catalog & Sales', badgeColor: '#8b5cf6' },
+                        { value: 'customer', label: 'Customer', badge: 'Standard', badgeColor: '#3b82f6' }
+                      ]}
+                      placeholder="Select Role..."
+                    />
                   </div>
                   {editRole === 'vendor' && (
                     <div>
                       <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>
                         Assigned Storefront
                       </label>
-                      <select
-                        className="select-custom"
+                      <CustomDropdown
                         value={editVendorId}
-                        onChange={e => setEditVendorId(e.target.value)}
-                        style={{ width: '100%', padding: '0.55rem 0.85rem' }}
-                      >
-                        {storefronts.map(s => (
-                          <option key={s.id} value={s.id}>{s.name} ({s.id})</option>
-                        ))}
-                      </select>
+                        onChange={val => setEditVendorId(val)}
+                        options={storefronts.map(s => ({
+                          value: s.id,
+                          label: s.name,
+                          sublabel: `(${s.id})`,
+                          badge: s.tier || 'Verified',
+                          badgeColor: s.tier === 'Enterprise' ? '#6366f1' : s.tier === 'Gold' ? '#eab308' : '#10b981'
+                        }))}
+                        placeholder="Select Storefront..."
+                        searchable={storefronts.length > 4}
+                      />
                     </div>
                   )}
                 </div>
@@ -852,15 +953,7 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
                     </td>
                     <td style={{ textAlign: 'right' }}>
                       <div style={{ display: 'inline-flex', gap: 6 }}>
-                        <button
-                          onClick={() => handleStartEdit(u)}
-                          className="btn btn-secondary"
-                          style={{ padding: '4px 8px', fontSize: '0.75rem' }}
-                          title="Edit Profile & Permissions"
-                        >
-                          <Edit2 size={13} />
-                          Edit
-                        </button>
+                    
                         <button
                           onClick={() => {
                             setPasswordTargetUser(u);
@@ -962,16 +1055,16 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
                     <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>
                       Seller Tier
                     </label>
-                    <select
-                      className="select-custom"
+                    <CustomDropdown
                       value={storefrontTier}
-                      onChange={e => setStorefrontTier(e.target.value)}
-                      style={{ width: '100%', padding: '0.55rem 0.85rem' }}
-                    >
-                      <option value="Verified Platinum">Verified Platinum</option>
-                      <option value="Gold Merchant">Gold Merchant</option>
-                      <option value="Verified Partner">Verified Partner</option>
-                    </select>
+                      onChange={val => setStorefrontTier(val)}
+                      options={[
+                        { value: 'Verified Platinum', label: 'Verified Platinum', badge: 'Tier 1 Top Seller', badgeColor: '#8b5cf6' },
+                        { value: 'Gold Merchant', label: 'Gold Merchant', badge: 'Tier 2 Premier', badgeColor: '#f59e0b' },
+                        { value: 'Verified Partner', label: 'Verified Partner', badge: 'Tier 3 Standard', badgeColor: '#10b981' }
+                      ]}
+                      placeholder="Select Seller Tier..."
+                    />
                   </div>
                 </div>
 
@@ -987,6 +1080,173 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
             </div>
           )}
 
+          {/* Edit Storefront Modal */}
+          {editingStorefront && (
+            <div
+              className="card"
+              style={{
+                marginBottom: 20,
+                border: '1.5px solid #2563eb',
+                background: '#f8fafc',
+                padding: '1.5rem',
+                borderRadius: 12
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                <h3 style={{ fontSize: '1rem', fontWeight: 800, margin: 0, color: '#1e40af' }}>
+                  Edit Storefront Tenant: {editingStorefront.name} ({editingStorefront.id})
+                </h3>
+                <button
+                  onClick={() => setEditingStorefront(null)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748b' }}
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              <form onSubmit={handleUpdateStorefrontSubmit}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, marginBottom: 14 }}>
+                  <div>
+                    <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>
+                      Storefront Name *
+                    </label>
+                    <input
+                      type="text"
+                      className="input"
+                      value={editStorefrontName}
+                      onChange={e => setEditStorefrontName(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>
+                      Seller Tier
+                    </label>
+                    <CustomDropdown
+                      value={editStorefrontTier}
+                      onChange={val => setEditStorefrontTier(val)}
+                      options={[
+                        { value: 'Verified Platinum', label: 'Verified Platinum', badge: 'Tier 1 Top Seller', badgeColor: '#8b5cf6' },
+                        { value: 'Gold Merchant', label: 'Gold Merchant', badge: 'Tier 2 Premier', badgeColor: '#f59e0b' },
+                        { value: 'Verified Partner', label: 'Verified Partner', badge: 'Tier 3 Standard', badgeColor: '#10b981' }
+                      ]}
+                      placeholder="Select Seller Tier..."
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>
+                      Storefront Status
+                    </label>
+                    <CustomDropdown
+                      value={editStorefrontStatus}
+                      onChange={val => setEditStorefrontStatus(val)}
+                      options={[
+                        { value: 'active', label: 'Active / Operational', badge: 'Normal', badgeColor: '#10b981' },
+                        { value: 'suspended', label: 'Suspended / Paused', badge: 'Restricted', badgeColor: '#f59e0b' },
+                        { value: 'pending', label: 'Pending Review', badge: 'Verification', badgeColor: '#6366f1' }
+                      ]}
+                      placeholder="Select Status..."
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>
+                      Platform Cut / Commission (%)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="1"
+                      className="input"
+                      value={editStorefrontCommissionRate}
+                      onChange={e => setEditStorefrontCommissionRate(Number(e.target.value))}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                  <button type="button" onClick={() => setEditingStorefront(null)} className="btn btn-secondary">
+                    Cancel
+                  </button>
+                  <button type="submit" disabled={isSubmittingEditStorefront} className="btn btn-primary">
+                    {isSubmittingEditStorefront ? 'Saving...' : 'Save Storefront Changes'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {/* Delete Storefront Confirmation Modal */}
+          {deletingStorefront && (
+            <div
+              className="card"
+              style={{
+                marginBottom: 20,
+                border: '1.5px solid #ef4444',
+                background: '#fff5f5',
+                padding: '1.5rem',
+                borderRadius: 12
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 14 }}>
+                <div
+                  style={{
+                    width: 40,
+                    height: 40,
+                    borderRadius: 8,
+                    background: '#fee2e2',
+                    color: '#dc2626',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0
+                  }}
+                >
+                  <Trash2 size={20} />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: '1rem', fontWeight: 800, margin: '0 0 6px 0', color: '#991b1b' }}>
+                    Confirm Storefront Deletion
+                  </h3>
+                  <p style={{ fontSize: '0.825rem', color: '#7f1d1d', margin: 0, lineHeight: 1.5 }}>
+                    Are you sure you want to permanently delete storefront tenant{' '}
+                    <strong>{deletingStorefront.name}</strong> (<code>{deletingStorefront.id}</code>)?
+                  </p>
+                  <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <label style={{ fontSize: '0.8rem', color: '#7f1d1d', display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontWeight: 600 }}>
+                      <input
+                        type="checkbox"
+                        checked={forceDeleteStorefront}
+                        onChange={e => setForceDeleteStorefront(e.target.checked)}
+                      />
+                      Force Delete (Automatically purge active catalog products and bypass order check)
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDeletingStorefront(null);
+                    setForceDeleteStorefront(false);
+                  }}
+                  className="btn btn-secondary"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDeleteStorefrontSubmit}
+                  disabled={isDeletingStorefront}
+                  className="btn btn-danger"
+                >
+                  {isDeletingStorefront ? 'Deleting...' : 'Confirm Delete Storefront'}
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Storefronts Table */}
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
             <table>
@@ -998,6 +1258,7 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
                   <th>Platform Cut</th>
                   <th>Seller Rating</th>
                   <th>Status</th>
+                  <th style={{ textAlign: 'right' }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -1041,7 +1302,33 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
                       </span>
                     </td>
                     <td>
-                      <span className="badge badge-emerald">{s.status || 'ACTIVE'}</span>
+                      <span className={`badge ${s.status === 'suspended' ? 'badge-amber' : 'badge-emerald'}`}>
+                        {(s.status || 'ACTIVE').toUpperCase()}
+                      </span>
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      <div style={{ display: 'inline-flex', gap: 6 }}>
+                        <button
+                          onClick={() => handleStartEditStorefront(s)}
+                          className="btn btn-secondary"
+                          style={{ padding: '4px 8px', fontSize: '0.75rem' }}
+                          title="Edit Storefront Organization"
+                        >
+                          <Edit2 size={13} />
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => {
+                            setDeletingStorefront(s);
+                            setForceDeleteStorefront(false);
+                          }}
+                          className="btn btn-danger"
+                          style={{ padding: '4px 8px', fontSize: '0.75rem' }}
+                          title="Delete Storefront Tenant"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -1051,104 +1338,6 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
         </div>
       )}
 
-      {/* ========================================================
-          TAB 3: ASYMMETRIC KEYS & TOKEN SECURITY AUDIT
-          ======================================================== */}
-      {activeSection === 'security' && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: 20 }}>
-          {/* Active JWT Inspection Card */}
-          <div className="card">
-            <h3 style={{ fontSize: '1rem', fontWeight: 800, margin: '0 0 0.5rem 0', color: 'var(--text-primary)' }}>
-              Active Asymmetric Session Token
-            </h3>
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0 0 1rem 0' }}>
-              Cryptographically signed using Ed25519 (EdDSA) private key on TejX backend. Verified statelessly via Public Key.
-            </p>
-
-            <div style={{ marginBottom: 12 }}>
-              <label style={{ fontSize: '0.725rem', fontWeight: 700, color: '#64748b', display: 'block', marginBottom: 4 }}>
-                BEARER TOKEN (RAW JWT):
-              </label>
-              <textarea
-                readOnly
-                value={tokenString || 'No token active in localStorage'}
-                style={{
-                  width: '100%',
-                  height: 90,
-                  fontSize: '0.725rem',
-                  fontFamily: 'var(--font-mono)',
-                  background: '#f8fafc',
-                  border: '1px solid #e2e8f0',
-                  borderRadius: 8,
-                  padding: 8,
-                  resize: 'none',
-                  color: '#334155'
-                }}
-              />
-            </div>
-
-            {securityMessage && (
-              <div
-                style={{
-                  padding: '8px 12px',
-                  borderRadius: 6,
-                  fontSize: '0.775rem',
-                  marginBottom: 12,
-                  background: securityMessage.type === 'success' ? '#ecfdf5' : '#fff1f2',
-                  color: securityMessage.type === 'success' ? '#065f46' : '#e11d48',
-                  border: `1px solid ${securityMessage.type === 'success' ? '#a7f3d0' : '#fecdd3'}`
-                }}
-              >
-                {securityMessage.text}
-              </div>
-            )}
-
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button onClick={handleVerifyToken} className="btn btn-primary" style={{ flex: 1 }}>
-                <ShieldCheck size={14} />
-                Verify Public Key Signature
-              </button>
-              <button onClick={handleRevokeToken} className="btn btn-danger" style={{ flex: 1 }}>
-                <RotateCcw size={14} />
-                Revoke & Blacklist
-              </button>
-            </div>
-          </div>
-
-          {/* Security Claims Overview */}
-          <div className="card">
-            <h3 style={{ fontSize: '1rem', fontWeight: 800, margin: '0 0 0.5rem 0', color: 'var(--text-primary)' }}>
-              Claims & Asymmetric Identity Architecture
-            </h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, fontSize: '0.8rem', marginTop: 12 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f1f5f9' }}>
-                <span style={{ color: '#64748b' }}>Algorithm:</span>
-                <span style={{ fontWeight: 700 }}>EdDSA (PureEd25519)</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f1f5f9' }}>
-                <span style={{ color: '#64748b' }}>Subject (sub):</span>
-                <span style={{ fontWeight: 700 }}>{currentProfile?.sub || 'usr-guest'}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f1f5f9' }}>
-                <span style={{ color: '#64748b' }}>Role Claim:</span>
-                <span style={{ fontWeight: 700, textTransform: 'capitalize' }}>{currentProfile?.role || 'Guest'}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f1f5f9' }}>
-                <span style={{ color: '#64748b' }}>Assigned Storefront:</span>
-                <span style={{ fontWeight: 700 }}>{currentProfile?.vendorId || 'Global / None'}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f1f5f9' }}>
-                <span style={{ color: '#64748b' }}>Active Token Type:</span>
-                <span style={{ fontWeight: 700 }}>Bearer (RFC 6750)</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0' }}>
-                <span style={{ color: '#64748b' }}>Blacklist Verification:</span>
-                <span style={{ fontWeight: 700, color: '#059669' }}>Synchronized with TejX LRU Cache</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

@@ -127,6 +127,7 @@ function buildAuthProfile(payload: AuthResponse, token: string): AuthProfile | n
     token,
     tokenType: typeof payload.tokenType === 'string' ? payload.tokenType : 'Bearer',
     sub: typeof payload.sub === 'string' ? payload.sub : '',
+    username: typeof payload.username === 'string' ? payload.username : '',
     name: typeof payload.name === 'string' ? payload.name : role,
     email: typeof payload.email === 'string' ? payload.email : '',
     role,
@@ -199,7 +200,7 @@ export async function fetchUserAccounts(): Promise<UserAccount[]> {
     });
     if (!res.ok) return [];
     const json = await res.json();
-    return json.data?.users || [];
+    return json.users || json.data?.users || [];
   } catch {
     return [];
   }
@@ -222,7 +223,7 @@ export async function createUserAccount(user: {
     });
     const json = await res.json();
     if (!res.ok) return { success: false, error: json.error || 'Failed to create user' };
-    return { success: true, data: json.data };
+    return { success: true, data: json.data || json };
   } catch (err: any) {
     return { success: false, error: err.message };
   }
@@ -231,6 +232,7 @@ export async function createUserAccount(user: {
 export async function updateUserAccount(
   userId: string,
   user: {
+    username?: string;
     name: string;
     email: string;
     role: string;
@@ -247,6 +249,27 @@ export async function updateUserAccount(
     const json = await res.json();
     if (!res.ok) return { success: false, error: json.error || 'Failed to update user' };
     return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
+export async function updateMyProfile(
+  profile: {
+    username?: string;
+    name?: string;
+    email?: string;
+  }
+): Promise<{ success: boolean; data?: any; error?: string }> {
+  try {
+    const res = await fetch(backendUrl('/api/auth/me'), {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(profile)
+    });
+    const json = await res.json();
+    if (!res.ok) return { success: false, error: json.error || 'Failed to update profile' };
+    return { success: true, data: json.data || json };
   } catch (err: any) {
     return { success: false, error: err.message };
   }
@@ -307,10 +330,12 @@ export async function revokeToken(): Promise<{ success: boolean; message?: strin
       headers: getAuthHeaders()
     });
     clearStoredToken();
+    clearOriginalToken();
     const json = await readAuthResponse(res);
     return { success: res.ok, message: typeof json.message === 'string' ? json.message : 'Token revoked', error: responseError(json, 'Unable to revoke token') };
   } catch (err: any) {
     clearStoredToken();
+    clearOriginalToken();
     return { success: false, error: err.message };
   }
 }
@@ -465,9 +490,15 @@ export async function executeAtomicCheckout(payload: {
   }
 }
 
-export async function fetchSnapshotOrders(): Promise<{ orders: SnapshotInvoice[]; totalCount: number }> {
+export async function fetchSnapshotOrders(params?: { vendorId?: string; customerId?: string }): Promise<{ orders: SnapshotInvoice[]; totalCount: number }> {
   try {
-    const res = await fetch(backendUrl('/api/marketplace/orders'), {
+    const query = new URLSearchParams();
+    if (params?.vendorId) query.set('vendorId', params.vendorId);
+    if (params?.customerId) query.set('customerId', params.customerId);
+    const qs = query.toString();
+    const url = qs ? `/api/marketplace/orders?${qs}` : '/api/marketplace/orders';
+
+    const res = await fetch(backendUrl(url), {
       headers: getAuthHeaders()
     });
     if (!res.ok) return { orders: [], totalCount: 0 };
@@ -578,7 +609,7 @@ export async function createStorefront(storefront: {
 
 export async function updateStorefront(
   vendorId: string,
-  storefront: { name?: string; tier?: string; status?: string }
+  storefront: { name?: string; tier?: string; status?: string; commissionRate?: number; rating?: number }
 ): Promise<{ success: boolean; data?: VendorStorefront; error?: string }> {
   try {
     const res = await fetch(backendUrl(`/api/vendor/storefronts/${vendorId}`), {
@@ -594,11 +625,12 @@ export async function updateStorefront(
   }
 }
 
-export async function deleteStorefront(vendorId: string): Promise<{ success: boolean; error?: string }> {
+export async function deleteStorefront(vendorId: string, force = false): Promise<{ success: boolean; error?: string }> {
   try {
-    const res = await fetch(backendUrl(`/api/vendor/storefronts/${vendorId}`), {
+    const res = await fetch(backendUrl(`/api/vendor/storefronts/${vendorId}${force ? '?force=true' : ''}`), {
       method: 'DELETE',
-      headers: getAuthHeaders()
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ force })
     });
     const json = await res.json();
     if (!res.ok) return { success: false, error: json.error || 'Failed to delete storefront' };
@@ -672,9 +704,13 @@ export async function fetchVendorMetrics(vendorId?: string): Promise<any> {
 // 5. Real-Time Financial Analytics Matrix
 // ==========================================
 
-export async function fetchPlatformFinancialMatrix(period: string = 'daily'): Promise<FinancialMatrix | null> {
+export async function fetchPlatformFinancialMatrix(period: string = 'daily', vendorId?: string): Promise<FinancialMatrix | null> {
   try {
-    const res = await fetch(backendUrl(`/api/analytics/financial-matrix?period=${period}`), {
+    const params = new URLSearchParams({ period });
+    if (vendorId && vendorId !== 'all') {
+      params.set('vendorId', vendorId);
+    }
+    const res = await fetch(backendUrl(`/api/analytics/financial-matrix?${params.toString()}`), {
       headers: getAuthHeaders()
     });
     if (!res.ok) return null;
@@ -685,9 +721,17 @@ export async function fetchPlatformFinancialMatrix(period: string = 'daily'): Pr
   }
 }
 
-export async function fetchCommissionLedger(): Promise<CommissionLedgerEntry[]> {
+export async function fetchCommissionLedger(vendorId?: string, period?: string): Promise<CommissionLedgerEntry[]> {
   try {
-    const res = await fetch(backendUrl('/api/analytics/commission-ledger'), {
+    const params = new URLSearchParams();
+    if (vendorId && vendorId !== 'all') {
+      params.set('vendorId', vendorId);
+    }
+    if (period) {
+      params.set('period', period);
+    }
+    const qs = params.toString() ? `?${params.toString()}` : '';
+    const res = await fetch(backendUrl(`/api/analytics/commission-ledger${qs}`), {
       headers: getAuthHeaders()
     });
     if (!res.ok) return [];
@@ -699,9 +743,16 @@ export async function fetchCommissionLedger(): Promise<CommissionLedgerEntry[]> 
   }
 }
 
-export async function fetchTopKAnalytics(k: number = 5): Promise<TopKAnalytics | null> {
+export async function fetchTopKAnalytics(k: number = 5, vendorId?: string, period?: string): Promise<TopKAnalytics | null> {
   try {
-    const res = await fetch(backendUrl(`/api/analytics/top-k?k=${k}`), {
+    const params = new URLSearchParams({ k: String(k) });
+    if (vendorId && vendorId !== 'all') {
+      params.set('vendorId', vendorId);
+    }
+    if (period) {
+      params.set('period', period);
+    }
+    const res = await fetch(backendUrl(`/api/analytics/top-k?${params.toString()}`), {
       headers: getAuthHeaders()
     });
     if (!res.ok) return null;

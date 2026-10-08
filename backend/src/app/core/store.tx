@@ -23,7 +23,7 @@ export function recordAppEvent(action: string, entity: string, entityId: string)
             doc.setString("action", event.action);
             doc.setString("entity", event.entity);
             doc.setString("entityId", event.entityId);
-            doc.setInt("timestamp", event.timestamp as int);
+            doc.setDate("timestamp", event.timestamp);
             db.insertOne("events", doc);
         } catch (e) {
             // Keep going if write fails
@@ -41,7 +41,7 @@ export function persistUser(user: AppUser): void {
             doc.setString("name", user.name);
             doc.setString("email", user.email);
             doc.setString("role", user.role);
-            doc.setInt("createdAt", user.createdAt as int);
+            doc.setDate("createdAt", user.createdAt);
             db.insertOne("users", doc);
         } catch (e) {
             print("[mongo-err] Failed to persist user to MongoDB: " + String(e));
@@ -74,7 +74,7 @@ export function persistProduct(prod: AppProduct): void {
             doc.setFloat("price", prod.price);
             doc.setString("category", prod.category);
             doc.setInt("stock", prod.stock);
-            doc.setInt("createdAt", prod.createdAt as int);
+            doc.setDate("createdAt", prod.createdAt);
             db.insertOne("products", doc);
         } catch (e) {
             print("[mongo-err] Failed to persist product to MongoDB: " + String(e));
@@ -117,7 +117,7 @@ export function loadAppStateFromMongoOrSeed(client: Optional<MongoDatabase>): Ap
                     d.string("name"),
                     d.string("email"),
                     d.string("role"),
-                    d.int("createdAt") as int64
+                    d.int64("createdAt")
                 );
                 state.users.add(u.id, u);
             }
@@ -132,7 +132,7 @@ export function loadAppStateFromMongoOrSeed(client: Optional<MongoDatabase>): Ap
                     d.float("price"),
                     d.string("category"),
                     d.int("stock"),
-                    d.int("createdAt") as int64
+                    d.int64("createdAt")
                 );
                 state.products.add(p.id, p);
             }

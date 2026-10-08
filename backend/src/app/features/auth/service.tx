@@ -59,8 +59,11 @@ class AuthService {
                 let username = d.string("username");
                 if (username == "") continue;
                 let user = new UserAccount(d.string("id"), username, d.string("passwordHash"), d.string("name"), d.string("email"), d.string("role"), d.string("vendorId"), d.stringArray("permissions"), d.int64("createdAt"));
+                let exists: bool = this.userAccounts.has(username);
                 this.userAccounts.set(username, user);
-                this.userIds.push(username);
+                if (!exists) {
+                    this.userIds.push(username);
+                }
             }
         } catch (e) {
             print("[mongo-err] Failed to load user accounts: " + String(e));
@@ -278,6 +281,7 @@ class AuthService {
     }
 
     listUsers(): UserAccount[] {
+        this.loadUsersFromMongo();
         let list: UserAccount[] = [];
         for (let i = 0; i < this.userIds.length(); i++) {
             let u = this.userAccounts.get(this.userIds[i]);
@@ -305,23 +309,63 @@ class AuthService {
         return acc;
     }
 
-    updateUser(userId: string, name: string, email: string, role: string, vendorId: string, permissions: string[]): bool {
+    getUserById(userId: string): Optional<UserAccount> {
         for (let i = 0; i < this.userIds.length(); i++) {
             let u = this.userAccounts.get(this.userIds[i]);
             if (u != None) {
                 let acc = u as UserAccount;
                 if (acc.id == userId || acc.username == userId) {
-                    acc.name = name;
-                    acc.email = email;
-                    acc.role = role;
-                    acc.vendorId = vendorId;
-                    acc.permissions = permissions;
-                    this.persistUser(acc);
-                    return true;
+                    return u;
                 }
             }
         }
-        return false;
+        return None;
+    }
+
+    updateUser(userId: string, username: string, name: string, email: string, role: string, vendorId: string, permissions: string[]): bool {
+        let targetKey: string = "";
+        let targetAcc: Optional<UserAccount> = None;
+        for (let i = 0; i < this.userIds.length(); i++) {
+            let u = this.userAccounts.get(this.userIds[i]);
+            if (u != None) {
+                let acc = u as UserAccount;
+                if (acc.id == userId || acc.username == userId) {
+                    targetKey = this.userIds[i];
+                    targetAcc = u;
+                    break;
+                }
+            }
+        }
+        if (targetAcc == None) return false;
+        let acc = targetAcc as UserAccount;
+        let oldUsername: string = acc.username;
+        let newUsername: string = username.trim() != "" ? username.trim() : oldUsername;
+
+        if (newUsername != oldUsername) {
+            if (this.userAccounts.has(newUsername)) {
+                let existing = this.userAccounts.get(newUsername) as UserAccount;
+                if (existing.id != acc.id) {
+                    return false;
+                }
+            }
+            this.userAccounts.delete(oldUsername);
+            for (let i = 0; i < this.userIds.length(); i++) {
+                if (this.userIds[i] == oldUsername) {
+                    this.userIds[i] = newUsername;
+                    break;
+                }
+            }
+            acc.username = newUsername;
+            this.userAccounts.set(newUsername, acc);
+        }
+
+        acc.name = name;
+        acc.email = email;
+        acc.role = role;
+        acc.vendorId = vendorId;
+        acc.permissions = permissions;
+        this.persistUser(acc);
+        return true;
     }
 
     updatePassword(userId: string, newPasswordHash: string): bool {

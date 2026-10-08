@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from "react";
 import {
   ShoppingCart,
   Store,
@@ -7,15 +7,15 @@ import {
   Database,
   Lock,
   LogIn,
-  AlertTriangle
-} from 'lucide-react';
-import Logo from './components/Logo';
-import { MarketplaceView } from './components/MarketplaceView';
-import { VendorPortalView } from './components/VendorPortalView';
-import { FinancialMatrixView } from './components/FinancialMatrixView';
-import { SecurityCenterView } from './components/SecurityCenterView';
-import { LoginModal } from './components/LoginModal';
-import { UserMenuDropdown } from './components/UserMenuDropdown';
+  AlertTriangle,
+} from "lucide-react";
+import Logo from "./components/Logo";
+import { MarketplaceView } from "./components/MarketplaceView";
+import { VendorPortalView } from "./components/VendorPortalView";
+import { FinancialMatrixView } from "./components/FinancialMatrixView";
+import { SecurityCenterView } from "./components/SecurityCenterView";
+import { LoginModal } from "./components/LoginModal";
+import { UserMenuDropdown } from "./components/UserMenuDropdown";
 import {
   getBackendHealth,
   getDatabaseStatus,
@@ -23,9 +23,10 @@ import {
   loginAs,
   revokeToken,
   clearStoredToken,
-  getStoredToken
-} from './services/api';
-import { BackendHealth, DatabaseStatus, AuthProfile } from './services/types';
+  clearOriginalToken,
+  getStoredToken,
+} from "./services/api";
+import { BackendHealth, DatabaseStatus, AuthProfile } from "./services/types";
 
 // ==========================================
 // Permission Helpers
@@ -33,32 +34,67 @@ import { BackendHealth, DatabaseStatus, AuthProfile } from './services/types';
 
 function userHasPermission(profile: AuthProfile | null, perm: string): boolean {
   if (!profile || !profile.permissions) return false;
-  if (profile.permissions.includes('*')) return true;
+  if (profile.permissions.includes("*")) return true;
   return profile.permissions.includes(perm);
 }
 
 function canAccessTab(profile: AuthProfile | null, tab: string): boolean {
-  if (!profile) return tab === 'marketplace'; // Guests can browse marketplace
+  if (!profile) return tab === "marketplace"; // Guests can browse marketplace
   const role = profile.role;
   switch (tab) {
-    case 'marketplace':
+    case "marketplace":
       return true; // Everyone can browse
-    case 'vendor':
-      return role === 'admin' || role === 'vendor' || userHasPermission(profile, 'inventory:manage');
-    case 'financial':
-      return role === 'admin' || userHasPermission(profile, 'analytics:read');
-    case 'security':
-      return role === 'admin' || userHasPermission(profile, 'users:manage');
+    case "vendor":
+      return (
+        role === "admin" ||
+        role === "vendor" ||
+        userHasPermission(profile, "inventory:manage")
+      );
+    case "financial":
+      return role === "admin" || userHasPermission(profile, "analytics:read");
+    case "security":
+      return role === "admin" || userHasPermission(profile, "users:manage");
     default:
       return false;
   }
 }
 
+type TabType = "marketplace" | "vendor" | "financial" | "security";
+
+function getTabFromUrl(): TabType {
+  if (typeof window === "undefined") return "marketplace";
+  const path = window.location.pathname.toLowerCase().replace(/^\/+|\/+$/g, "");
+  const hash = window.location.hash.toLowerCase().replace(/^#\/?/, "");
+  const target = path || hash;
+  if (target === "vendor" || target === "vendor-portal") return "vendor";
+  if (target === "financial" || target === "analytics") return "financial";
+  if (target === "security" || target === "users" || target === "iam")
+    return "security";
+  return "marketplace";
+}
+
+function getUrlForTab(tab: TabType): string {
+  switch (tab) {
+    case "vendor":
+      return "/vendor";
+    case "financial":
+      return "/financial";
+    case "security":
+      return "/security";
+    default:
+      return "/marketplace";
+  }
+}
+
 export const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'marketplace' | 'vendor' | 'financial' | 'security'>('marketplace');
+  const [activeTab, setActiveTabState] = useState<TabType>(() =>
+    getTabFromUrl(),
+  );
   const [health, setHealth] = useState<BackendHealth | null>(null);
   const [dbStatus, setDbStatus] = useState<DatabaseStatus | null>(null);
-  const [currentProfile, setCurrentProfile] = useState<AuthProfile | null>(null);
+  const [currentProfile, setCurrentProfile] = useState<AuthProfile | null>(
+    null,
+  );
   const [sessionError, setSessionError] = useState<string | null>(null);
 
   // Modal States
@@ -68,16 +104,58 @@ export const App: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
 
+  const handleTabClick = useCallback((tab: TabType, updateHistory = true) => {
+    setActiveTabState(tab);
+    if (updateHistory && typeof window !== "undefined") {
+      const url = getUrlForTab(tab);
+      if (window.location.pathname !== url) {
+        window.history.pushState({ tab }, "", url);
+      }
+    }
+  }, []);
+
+  // Sync tab with browser URL on popstate and initial load
+  useEffect(() => {
+    const initialTab = getTabFromUrl();
+    setActiveTabState(initialTab);
+    const targetUrl = getUrlForTab(initialTab);
+
+    // If on root, auto redirect to /marketplace
+    if (window.location.pathname === "/" || window.location.pathname === "") {
+      const search = window.location.search || "";
+      const hash = window.location.hash || "";
+      window.history.replaceState({ tab: "marketplace" }, "", `/marketplace${search}${hash}`);
+    } else if (window.location.pathname !== targetUrl) {
+      window.history.replaceState({ tab: initialTab }, "", targetUrl);
+    }
+
+    const handlePopState = (e: PopStateEvent) => {
+      if (window.location.pathname === "/" || window.location.pathname === "") {
+        setActiveTabState("marketplace");
+        window.history.replaceState({ tab: "marketplace" }, "", "/marketplace");
+        return;
+      }
+      if (e.state?.tab) {
+        setActiveTabState(e.state.tab);
+      } else {
+        setActiveTabState(getTabFromUrl());
+      }
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
   const checkStatus = useCallback(async () => {
     try {
       const [h, db] = await Promise.all([
         getBackendHealth(),
-        getDatabaseStatus()
+        getDatabaseStatus(),
       ]);
       setHealth(h);
       setDbStatus(db);
     } catch (e) {
-      console.warn('[App] Health poll error:', e);
+      console.warn("[App] Health poll error:", e);
     }
   }, []);
 
@@ -113,7 +191,7 @@ export const App: React.FC = () => {
 
   const hasPermission = useCallback(
     (perm: string) => userHasPermission(currentProfile, perm),
-    [currentProfile]
+    [currentProfile],
   );
 
   const handleLoginSuccess = (profile: AuthProfile) => {
@@ -129,17 +207,31 @@ export const App: React.FC = () => {
       await revokeToken();
     } catch {
       clearStoredToken();
+      clearOriginalToken();
     }
+    clearStoredToken();
+    clearOriginalToken();
     setCurrentProfile(null);
     setIsAuthenticated(false);
-    setActiveTab('marketplace');
+    handleTabClick("marketplace");
     setIsLoginModalOpen(true);
   };
 
-  const handleQuickRoleChange = async (role: 'guest' | 'customer' | 'vendor' | 'admin', vendorId?: string) => {
-    const res = await loginAs(role, vendorId || '');
+  const handleQuickRoleChange = async (
+    role: "guest" | "customer" | "vendor" | "admin",
+    vendorId?: string,
+  ) => {
+    if (role === "guest") {
+      await handleSignOut();
+      return;
+    }
+
+    const res = await loginAs(role, vendorId || "");
     if (!res.success || !res.data) {
-      setSessionError(res.error || 'Unable to change session. Your current session is unchanged.');
+      setSessionError(
+        res.error ||
+          "Unable to change session. Your current session is unchanged.",
+      );
       return;
     }
 
@@ -147,33 +239,28 @@ export const App: React.FC = () => {
     setIsAuthenticated(true);
     setSessionError(null);
     if (!canAccessTab(res.data, activeTab)) {
-      setActiveTab('marketplace');
+      handleTabClick("marketplace");
     }
-  };
-
-  const handleTabClick = (tab: 'marketplace' | 'vendor' | 'financial' | 'security') => {
-    // If no access, tab will show a gated message (handled below)
-    setActiveTab(tab);
   };
 
   // Permission-gated content wrapper
   const renderGatedContent = () => {
     // Marketplace is always accessible
-    if (activeTab === 'marketplace') {
+    if (activeTab === "marketplace") {
       return (
         <MarketplaceView
           currentProfile={currentProfile}
           onSwitchRole={handleQuickRoleChange}
-          onNavigateTab={setActiveTab}
+          onNavigateTab={handleTabClick}
         />
       );
     }
 
-    if (activeTab === 'vendor') {
-      if (!canAccessTab(currentProfile, 'vendor')) {
+    if (activeTab === "vendor") {
+      if (!canAccessTab(currentProfile, "vendor")) {
         return renderAccessDenied(
-          'Vendor Portal',
-          'You need inventory management or vendor-level access to use this portal.'
+          "Vendor Portal",
+          "You need inventory management or vendor-level access to use this portal.",
         );
       }
       return (
@@ -184,11 +271,11 @@ export const App: React.FC = () => {
       );
     }
 
-    if (activeTab === 'financial') {
-      if (!canAccessTab(currentProfile, 'financial')) {
+    if (activeTab === "financial") {
+      if (!canAccessTab(currentProfile, "financial")) {
         return renderAccessDenied(
-          'Financial Analytics',
-          'You need analytics:read permission or admin access to view financial data.'
+          "Financial Analytics",
+          "You need analytics:read permission or admin access to view financial data.",
         );
       }
       return (
@@ -199,11 +286,11 @@ export const App: React.FC = () => {
       );
     }
 
-    if (activeTab === 'security') {
-      if (!canAccessTab(currentProfile, 'security')) {
+    if (activeTab === "security") {
+      if (!canAccessTab(currentProfile, "security")) {
         return renderAccessDenied(
-          'Security & User Management',
-          'You need users:manage permission or admin access for this section.'
+          "Security & User Management",
+          "You need users:manage permission or admin access for this section.",
         );
       }
       return (
@@ -218,45 +305,60 @@ export const App: React.FC = () => {
   };
 
   const renderAccessDenied = (title: string, message: string) => (
-    <div style={{
-      maxWidth: 520,
-      margin: '4rem auto',
-      textAlign: 'center',
-      padding: '3rem 2rem',
-    }}>
-      <div style={{
-        width: 64,
-        height: 64,
-        borderRadius: 16,
-        background: '#fff7ed',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        margin: '0 auto 1.25rem',
-      }}>
+    <div
+      style={{
+        maxWidth: 520,
+        margin: "4rem auto",
+        textAlign: "center",
+        padding: "3rem 2rem",
+      }}
+    >
+      <div
+        style={{
+          width: 64,
+          height: 64,
+          borderRadius: 16,
+          background: "#fff7ed",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          margin: "0 auto 1.25rem",
+        }}
+      >
         <Lock size={28} color="#ea580c" />
       </div>
-      <h2 style={{
-        fontSize: '1.35rem',
-        fontWeight: 800,
-        color: '#0f172a',
-        margin: '0 0 0.5rem',
-      }}>
+      <h2
+        style={{
+          fontSize: "1.35rem",
+          fontWeight: 800,
+          color: "#0f172a",
+          margin: "0 0 0.5rem",
+        }}
+      >
         {title} is restricted
       </h2>
-      <p style={{
-        fontSize: '0.875rem',
-        color: '#64748b',
-        margin: '0 0 1.5rem',
-        lineHeight: 1.6,
-      }}>
+      <p
+        style={{
+          fontSize: "0.875rem",
+          color: "#64748b",
+          margin: "0 0 1.5rem",
+          lineHeight: 1.6,
+        }}
+      >
         {message}
       </p>
-      <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+      <div
+        style={{
+          display: "flex",
+          gap: "0.75rem",
+          justifyContent: "center",
+          flexWrap: "wrap",
+        }}
+      >
         <button
           className="btn btn-primary"
           onClick={() => setIsLoginModalOpen(true)}
-          style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+          style={{ display: "flex", alignItems: "center", gap: 6 }}
         >
           <LogIn size={15} />
           Sign In with Credentials
@@ -268,16 +370,24 @@ export const App: React.FC = () => {
   // Show loading state while checking auth
   if (!authChecked) {
     return (
-      <div style={{
-        minHeight: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        background: '#fafbfc',
-      }}>
-        <div style={{ textAlign: 'center' }}>
+      <div
+        style={{
+          minHeight: "100vh",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: "#fafbfc",
+        }}
+      >
+        <div style={{ textAlign: "center" }}>
           <Logo size={40} showText={false} />
-          <p style={{ color: '#64748b', fontSize: '0.875rem', marginTop: '1rem' }}>
+          <p
+            style={{
+              color: "#64748b",
+              fontSize: "0.875rem",
+              marginTop: "1rem",
+            }}
+          >
             Initializing...
           </p>
         </div>
@@ -285,118 +395,148 @@ export const App: React.FC = () => {
     );
   }
 
-  const roleMeta = getRoleBadgeStyle(currentProfile?.role || 'guest');
-
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg-canvas)' }}>
-      {/* Top Navigation Bar */}
+    <div
+      style={{
+        height: "100vh",
+        display: "flex",
+        flexDirection: "column",
+        background: "var(--bg-canvas)",
+        overflow: "hidden",
+      }}
+    >
+      {/* Top Navigation Bar - Fixed at top without scroll */}
       <header
         style={{
-          position: 'sticky',
+          position: "sticky",
           top: 0,
           zIndex: 50,
-          background: '#ffffff',
-          borderBottom: '1px solid #e2e8f0',
-          padding: '0.75rem 2rem'
+          background: "#ffffff",
+          borderBottom: "1px solid #e2e8f0",
+          padding: "0.65rem 1.5rem",
+          flexShrink: 0,
+          overflow: "visible",
         }}
       >
         <div
           style={{
-            width: '100%',
-            maxWidth: '1720px',
-            margin: '0 auto',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            gap: '1.5rem',
-            flexWrap: 'wrap'
+            width: "100%",
+            maxWidth: "1720px",
+            margin: "0 auto",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: "1rem",
+            flexWrap: "nowrap",
           }}
         >
           {/* Brand Logo & Nav */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "1.5rem" }}>
             <Logo size={32} showText={true} />
 
             {/* Main Primary Navigation */}
-            <nav className="segmented-nav">
+            <nav className="segmented-nav" style={{ flexShrink: 0 }}>
               <button
-                onClick={() => handleTabClick('marketplace')}
-                className={`segmented-nav-btn ${activeTab === 'marketplace' ? 'active' : ''}`}
+                onClick={() => handleTabClick("marketplace")}
+                className={`segmented-nav-btn ${activeTab === "marketplace" ? "active" : ""}`}
               >
                 <ShoppingCart size={15} />
                 Marketplace
               </button>
 
               <button
-                onClick={() => handleTabClick('vendor')}
-                className={`segmented-nav-btn ${activeTab === 'vendor' ? 'active' : ''}`}
+                onClick={() => handleTabClick("vendor")}
+                className={`segmented-nav-btn ${activeTab === "vendor" ? "active" : ""}`}
                 style={{
-                  opacity: canAccessTab(currentProfile, 'vendor') ? 1 : 0.5
+                  opacity: canAccessTab(currentProfile, "vendor") ? 1 : 0.45,
+                  cursor: canAccessTab(currentProfile, "vendor")
+                    ? "pointer"
+                    : "not-allowed",
                 }}
+                title={
+                  canAccessTab(currentProfile, "vendor")
+                    ? "Vendor Operations Portal"
+                    : "Requires Vendor or Admin privileges"
+                }
               >
                 <Store size={15} />
                 Vendor Portal
-                {!canAccessTab(currentProfile, 'vendor') && (
-                  <Lock size={11} style={{ marginLeft: 3, opacity: 0.6 }} />
-                )}
               </button>
 
               <button
-                onClick={() => handleTabClick('financial')}
-                className={`segmented-nav-btn ${activeTab === 'financial' ? 'active' : ''}`}
+                onClick={() => handleTabClick("financial")}
+                className={`segmented-nav-btn ${activeTab === "financial" ? "active" : ""}`}
                 style={{
-                  opacity: canAccessTab(currentProfile, 'financial') ? 1 : 0.5
+                  opacity: canAccessTab(currentProfile, "financial") ? 1 : 0.45,
+                  cursor: canAccessTab(currentProfile, "financial")
+                    ? "pointer"
+                    : "not-allowed",
                 }}
+                title={
+                  canAccessTab(currentProfile, "financial")
+                    ? "Financial Analytics & Revenue Matrix"
+                    : "Requires Analytics or Admin privileges"
+                }
               >
                 <BarChart3 size={15} />
                 Analytics
-                {!canAccessTab(currentProfile, 'financial') && (
-                  <Lock size={11} style={{ marginLeft: 3, opacity: 0.6 }} />
-                )}
               </button>
 
               <button
-                onClick={() => handleTabClick('security')}
-                className={`segmented-nav-btn ${activeTab === 'security' ? 'active' : ''}`}
+                onClick={() => handleTabClick("security")}
+                className={`segmented-nav-btn ${activeTab === "security" ? "active" : ""}`}
                 style={{
-                  opacity: canAccessTab(currentProfile, 'security') ? 1 : 0.5
+                  opacity: canAccessTab(currentProfile, "security") ? 1 : 0.45,
+                  cursor: canAccessTab(currentProfile, "security")
+                    ? "pointer"
+                    : "not-allowed",
                 }}
+                title={
+                  canAccessTab(currentProfile, "security")
+                    ? "Identity, Access & Security Management"
+                    : "Requires Administrator privileges"
+                }
               >
                 <ShieldCheck size={15} />
                 Users & Security
-                {!canAccessTab(currentProfile, 'security') && (
-                  <Lock size={11} style={{ marginLeft: 3, opacity: 0.6 }} />
-                )}
               </button>
             </nav>
           </div>
 
           {/* Right Controls: Database Status & User Menu */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            {/* Database indicator */}
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.4rem',
-                fontSize: '0.8rem',
-                color: 'var(--text-secondary)',
-                padding: '0.35rem 0.65rem',
-                borderRadius: '6px',
-                background: '#f8fafc',
-                border: '1px solid #e2e8f0'
-              }}
-            >
-              <Database size={13} color={dbStatus?.connected ? '#059669' : '#d97706'} />
-              <span>MongoDB</span>
-              <span
+          <div
+            style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}
+          >
+            {/* Database indicator (Admin only) */}
+            {currentProfile?.role === "admin" && (
+              <div
                 style={{
-                  width: 6,
-                  height: 6,
-                  borderRadius: '50%',
-                  background: dbStatus?.connected ? '#059669' : '#d97706'
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.4rem",
+                  fontSize: "0.8rem",
+                  color: "var(--text-secondary)",
+                  padding: "0.35rem 0.65rem",
+                  borderRadius: "6px",
+                  background: "#f8fafc",
+                  border: "1px solid #e2e8f0",
                 }}
-              />
-            </div>
+              >
+                <Database
+                  size={13}
+                  color={dbStatus?.connected ? "#059669" : "#d97706"}
+                />
+                <span>MongoDB</span>
+                <span
+                  style={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: "50%",
+                    background: dbStatus?.connected ? "#059669" : "#d97706",
+                  }}
+                />
+              </div>
+            )}
 
             {/* User Menu Dropdown (replaces old select) */}
             <UserMenuDropdown
@@ -404,112 +544,85 @@ export const App: React.FC = () => {
               isAuthenticated={isAuthenticated}
               onSignIn={() => setIsLoginModalOpen(true)}
               onSignOut={handleSignOut}
-              onOpenUserManagement={() => setActiveTab('security')}
+              onOpenUserManagement={() => setActiveTab("security")}
               onQuickSwitch={handleQuickRoleChange}
               hasPermission={hasPermission}
+              onProfileUpdated={setCurrentProfile}
             />
           </div>
         </div>
       </header>
 
-      {/* Contextual Role Bar */}
-      <div
+      {/* Main Content Area (Full Fluid Width) */}
+      <main
+        className="app-container no-scrollbar"
         style={{
-          background:
-            currentProfile?.role === 'admin'
-              ? '#ecfdf5'
-              : currentProfile?.role === 'vendor'
-              ? '#f5f3ff'
-              : currentProfile?.role === 'customer'
-              ? '#eff6ff'
-              : '#f8fafc',
-          borderBottom: '1px solid #e2e8f0',
-          padding: '0.45rem 2rem',
-          fontSize: '0.8rem',
-          transition: 'all 0.2s ease'
+          paddingTop: "1rem",
+          paddingBottom: "1rem",
+          flex: 1,
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+          overflowY: activeTab === "marketplace" ? "hidden" : "auto",
+          scrollbarWidth: "none",
+          msOverflowStyle: "none",
         }}
       >
-        <div
-          style={{
-            maxWidth: '1720px',
-            margin: '0 auto',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            flexWrap: 'wrap',
-            gap: '0.75rem'
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-            <span className={`badge ${roleMeta.badge}`}>
-              {roleMeta.label}
-            </span>
-            {currentProfile?.originalRole && currentProfile.originalRole !== currentProfile.role && (
-              <span
-                style={{
-                  background: '#dbeafe',
-                  color: '#1d4ed8',
-                  padding: '2px 8px',
-                  borderRadius: '4px',
-                  fontSize: '0.75rem',
-                  fontWeight: 600,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 4
-                }}
-              >
-                Switched View (Root Account: {currentProfile.originalRole.toUpperCase()})
-              </span>
-            )}
-            <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
-              {currentProfile?.role === 'admin' &&
-                'Full platform access — catalog, orders, analytics, user management, and security.'}
-              {currentProfile?.role === 'vendor' &&
-                'Vendor mode — manage inventory, fulfill orders, and track your store analytics.'}
-              {currentProfile?.role === 'customer' &&
-                'Customer mode — browse products, add to cart, and complete secure checkout.'}
-              {(!currentProfile || currentProfile?.role === 'guest') &&
-                'Guest mode — browse the marketplace. Sign in for full access.'}
-            </span>
-            {sessionError && (
-              <span role="alert" style={{ color: '#be123c', fontSize: '0.75rem', fontWeight: 600 }}>
-                {sessionError}
-              </span>
-            )}
+        {sessionError && (
+          <div
+            role="alert"
+            style={{
+              maxWidth: "1720px",
+              margin: "0 auto 1.25rem",
+              padding: "0.75rem 1.25rem",
+              borderRadius: 8,
+              background: "#fff1f2",
+              border: "1px solid #fecdd3",
+              color: "#be123c",
+              fontSize: "0.825rem",
+              fontWeight: 600,
+              flexShrink: 0,
+            }}
+          >
+            {sessionError}
           </div>
-        </div>
-      </div>
-
-      {/* Main Content Area (Full Fluid Width) */}
-      <main className="app-container" style={{ paddingTop: '1.5rem', flex: 1 }}>
+        )}
         {renderGatedContent()}
       </main>
 
-      {/* Clean Minimalist Footer */}
-      <footer
-        style={{
-          borderTop: '1px solid #e2e8f0',
-          padding: '1.25rem 2rem',
-          background: '#ffffff',
-          fontSize: '0.825rem',
-          color: 'var(--text-secondary)',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          flexWrap: 'wrap',
-          gap: '1rem',
-          width: '100%'
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>Aura Marketplace</span>
-          <span>•</span>
-          <span>Enterprise Multi-Vendor Commerce Engine</span>
-        </div>
-        <div>
-          <span>© {new Date().getFullYear()} Aura Marketplace Inc. All rights reserved.</span>
-        </div>
-      </footer>
+      {/* Clean Minimalist Footer (on non-marketplace tabs) */}
+      {activeTab !== "marketplace" && (
+        <footer
+          style={{
+            borderTop: "1px solid #e2e8f0",
+            padding: "1rem 2rem",
+            background: "#ffffff",
+            fontSize: "0.825rem",
+            color: "var(--text-secondary)",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            flexWrap: "wrap",
+            gap: "1rem",
+            width: "100%",
+            flexShrink: 0,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+            <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>
+              Aura Marketplace
+            </span>
+            <span>•</span>
+            <span>Enterprise Multi-Vendor Commerce Engine</span>
+          </div>
+          <div>
+            <span>
+              © {new Date().getFullYear()} Aura Marketplace Inc. All rights
+              reserved.
+            </span>
+          </div>
+        </footer>
+      )}
 
       {/* Login Modal */}
       <LoginModal
@@ -522,7 +635,7 @@ export const App: React.FC = () => {
             // Allow guest browse by closing
             setIsLoginModalOpen(false);
             if (!currentProfile) {
-              handleQuickRoleChange('guest');
+              handleQuickRoleChange("guest");
             }
           }
         }}
@@ -531,18 +644,5 @@ export const App: React.FC = () => {
     </div>
   );
 };
-
-function getRoleBadgeStyle(role: string) {
-  switch (role) {
-    case 'admin':
-      return { badge: 'badge-emerald', label: 'Super-Admin' };
-    case 'vendor':
-      return { badge: 'badge-purple', label: 'Vendor' };
-    case 'customer':
-      return { badge: 'badge-blue', label: 'Customer' };
-    default:
-      return { badge: 'badge-neutral', label: 'Guest' };
-  }
-}
 
 export default App;

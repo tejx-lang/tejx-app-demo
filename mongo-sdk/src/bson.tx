@@ -63,6 +63,97 @@ function isBinaryValue(value: any): bool {
     return value["data"] != None;
 }
 
+export function isDateKey(key: string): bool {
+    let lower: string = key.toLowerCase();
+    if (lower == "createdat" || lower == "updatedat" || lower == "timestamp" || lower == "date" || lower == "datetime") {
+        return true;
+    }
+    if (lower == "deletedat" || lower == "expiresat" || lower == "lastcheckedat" || lower == "lastmaterializedtimestamp" || lower == "revokedat") {
+        return true;
+    }
+    if (lower == "created_at" || lower == "updated_at" || lower == "deleted_at" || lower == "expires_at" || lower == "revoked_at" || lower == "last_checked_at") {
+        return true;
+    }
+    if (key.endsWith("At") && key.length() >= 4) {
+        return true;
+    }
+    if (key.endsWith("Time") && key.length() >= 5) {
+        return true;
+    }
+    if (key.endsWith("Timestamp") && key.length() >= 10) {
+        return true;
+    }
+    return false;
+}
+
+export function isDateValue(value: any): bool {
+    if (value == None) {
+        return false;
+    }
+    let t: string = typeof(value);
+    if (t == "Date") {
+        return true;
+    }
+    if (t != "object" && t != "struct") {
+        return false;
+    }
+    let bType: any = value["_bsonType"];
+    if (bType == "date" || bType == "datetime" || bType == "Date") {
+        return true;
+    }
+    if (value["$date"] != None) {
+        return true;
+    }
+    return false;
+}
+
+export function extractDateMillis(value: any): int64 {
+    if (value == None) {
+        return 0;
+    }
+    let t: string = typeof(value);
+    if (t == "int" || t == "int32" || t == "int64") {
+        return value as int64;
+    }
+    if (t == "object" || t == "struct") {
+        let m: any = value["millis"];
+        if (m == None) m = value["value"];
+        if (m == None) m = value["timestamp"];
+        if (m != None) {
+            let mt: string = typeof(m);
+            if (mt == "int" || mt == "int32" || mt == "int64") {
+                return m as int64;
+            }
+            if (mt == "float" || mt == "float32" || mt == "float64") {
+                return (m as float) as int64;
+            }
+            return Number.Int64(m);
+        }
+        if (value["$date"] != None) {
+            let d: any = value["$date"];
+            if (typeof(d) == "object" && d["$numberLong"] != None) {
+                return Number.Int64(d["$numberLong"]);
+            }
+            let dt: string = typeof(d);
+            if (dt == "int" || dt == "int32" || dt == "int64") {
+                return d as int64;
+            }
+            return Number.Int64(d);
+        }
+        if (typeof(value["getTime"]) == "function") {
+            return value.getTime() as int64;
+        }
+    }
+    return value as int64;
+}
+
+export function bsonDate(millis: int64): MongoJsonObject {
+    let dateValue: MongoJsonObject = objectOf({});
+    dateValue.setString("_bsonType", "date");
+    dateValue.setInt64("millis", millis);
+    return dateValue;
+}
+
 function withinInt32Range(value: int64): bool {
     return value >= -2147483648 && value <= 2147483647;
 }
@@ -230,6 +321,14 @@ class BsonEncoder {
             writer.writeCString(key);
             return writer.toBytes();
         }
+
+        if (isDateValue(value)) {
+            let millis: int64 = extractDateMillis(value);
+            writer.writeU8(bsonTypeDatetime());
+            writer.writeCString(key);
+            writeInt64LE(writer, millis);
+            return writer.toBytes();
+        }
         
         let kind: string = typeof(value);
         
@@ -281,6 +380,16 @@ class BsonEncoder {
         
         if (isIntegerType(kind)) {
             let integerValue: int64 = value as int64;
+            if (isDateKey(key) && integerValue > 0) {
+                if (integerValue > 1000000000 && integerValue < 10000000000) {
+                    integerValue = integerValue * 1000;
+                }
+                writer.writeU8(bsonTypeDatetime());
+                writer.writeCString(key);
+                writeInt64LE(writer, integerValue);
+                return writer.toBytes();
+            }
+
             if (withinInt32Range(integerValue)) {
                 writer.writeU8(bsonTypeInt32());
                 writer.writeCString(key);
@@ -294,9 +403,23 @@ class BsonEncoder {
         }
         
         if (isFloatType(kind)) {
+            let fVal: float = toFloatValue(value);
+            if (isDateKey(key) && fVal > 0.0) {
+                let integerValue: int64 = 0;
+                if (fVal > 1000000000.0 && fVal < 10000000000.0) {
+                    integerValue = (fVal * 1000.0) as int64;
+                } else {
+                    integerValue = fVal as int64;
+                }
+                writer.writeU8(bsonTypeDatetime());
+                writer.writeCString(key);
+                writeInt64LE(writer, integerValue);
+                return writer.toBytes();
+            }
+
             writer.writeU8(bsonTypeDouble());
             writer.writeCString(key);
-            writeDoubleLE(writer, toFloatValue(value));
+            writeDoubleLE(writer, fVal);
             return writer.toBytes();
         }
         

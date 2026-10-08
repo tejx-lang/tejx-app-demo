@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { LogIn, Key, User, Shield, AlertCircle, X } from 'lucide-react';
-import { loginWithCredentials, loginAs } from '../services/api';
+import { loginWithCredentials } from '../services/api';
 import { AuthProfile } from '../services/types';
 
 interface LoginModalProps {
@@ -37,22 +37,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLogin
     }
   };
 
-  const handleGuestBrowse = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await loginAs('guest');
-      if (res.success && res.data) {
-        onLoginSuccess(res.data);
-        onClose();
-      } else {
-        setError(res.error || 'Unable to start a guest browsing session. Please try again.');
-      }
-    } catch (err: any) {
-      setError(err.message || 'Guest browsing is temporarily unavailable.');
-    } finally {
-      setLoading(false);
-    }
+  const handleGuestBrowse = () => {
+    onClose();
   };
 
   return (
@@ -224,7 +210,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLogin
             style={{ width: '100%', padding: '0.7rem 1rem', fontSize: '0.9rem', marginBottom: 14 }}
           >
             <LogIn size={15} />
-            {loading ? 'Authenticating...' : 'Sign In with Asymmetric JWT'}
+            {loading ? 'Logging in...' : 'Login'}
           </button>
         </form>
 
@@ -244,7 +230,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLogin
               textDecoration: 'underline'
             }}
           >
-            {loading ? 'Starting guest session…' : 'Or continue browsing anonymously as Guest →'}
+            Continue browsing as Guest (Logged Out) →
           </button>
         </div>
       </div>

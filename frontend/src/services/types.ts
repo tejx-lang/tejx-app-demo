@@ -111,6 +111,7 @@ export interface AuthProfile {
   token: string;
   tokenType: string;
   sub: string;
+  username?: string;
   name: string;
   email: string;
   role: 'guest' | 'customer' | 'vendor' | 'admin';
@@ -124,6 +125,7 @@ export interface AuthProfile {
 
 export interface FinancialMatrix {
   trackingPeriod?: string;
+  selectedStore?: string;
   grossMerchandiseValue: number;
   platformCommissionRevenue: number;
   paymentGatewayFees: number;

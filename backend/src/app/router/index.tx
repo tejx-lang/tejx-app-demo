@@ -9,6 +9,7 @@ import { now } from "std:time";
 import {
     handleLogin,
     handleGetMe,
+    handleUpdateMe,
     handleLogout,
     handleListStaff,
     handleCreateStaff,
@@ -91,6 +92,7 @@ export function createAppRouter(): AppHttpRouter {
     // 1. Identity, Security & Access Control (IAM)
     router.post("/api/auth/login", handleLogin);
     router.get("/api/auth/me", handleGetMe);
+    router.put("/api/auth/me", handleUpdateMe);
     router.post("/api/auth/logout", handleLogout);
     router.get("/api/auth/staff", handleListStaff);
     router.post("/api/auth/staff", handleCreateStaff);

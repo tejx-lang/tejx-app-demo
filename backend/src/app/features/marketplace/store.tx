@@ -98,6 +98,26 @@ class MarketplaceStore {
         }
     }
 
+    reloadVendorsFromMongo(): void {
+        let maybeDb = getMongoDatabase();
+        if (!isMongoActive() || maybeDb == None) return;
+        try {
+            let db: MongoDatabase = maybeDb as MongoDatabase;
+            let vendorDocs = db.find("storefronts", new MongoJsonObject({}));
+            this.vendors = new Map<string, MarketplaceVendor>();
+            this.vendorIds = [];
+            for (let i = 0; i < vendorDocs.length(); i++) {
+                let d = vendorDocs[i];
+                let id = d.string("id");
+                if (id == "") continue;
+                this.vendors.set(id, new MarketplaceVendor(id, d.string("name"), d.string("tier"), d.float("rating"), d.float("commissionRate"), d.float("cancellationRate"), d.int("activeSkus"), d.string("status")));
+                this.vendorIds.push(id);
+            }
+        } catch (e) {
+            print("[mongo-err] Failed to reload vendors: " + String(e));
+        }
+    }
+
     // Hydrate state strictly from MongoDB collections.
     private hydrateFromMongo(): void {
         let maybeDb = getMongoDatabase();

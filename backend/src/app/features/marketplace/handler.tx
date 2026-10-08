@@ -202,8 +202,12 @@ export function handleCheckout(ctx: AppRouteContext): AppHttpResponse {
                     }
                 }
 
-                // Effective price (Flash sale or base)
-                let unitPrice: float = prod.isFlashSale ? prod.salePrice : prod.variants[v].price;
+                // Effective price from variant
+                let unitPrice: float = prod.variants[v].price;
+                if (prod.isFlashSale && prod.flashDiscountPercent > 0) {
+                    let discFactor: float = 1.0 - ((prod.flashDiscountPercent as float) / 100.0);
+                    unitPrice = prod.variants[v].price * discFactor;
+                }
                 let subtotal: float = unitPrice * (reqQty as float);
                 let taxAmount: float = subtotal * taxRate;
                 let commissionAmount: float = subtotal * platformCommissionRate;
@@ -303,7 +307,7 @@ export function handleGetVendorInventory(ctx: AppRouteContext): AppHttpResponse 
         if (prod.vendorId == vendorId || vendorId == "all") {
             for (let v = 0; v < prod.variants.length(); v++) {
                 let vnt = prod.variants[v];
-                let isLow: bool = vnt.stock < 30;
+                let isLow: bool = vnt.stock < 10;
                 if (isLow) {
                     lowStockCount = lowStockCount + 1;
                 }
@@ -479,7 +483,11 @@ export function handleGetFacets(ctx: AppRouteContext): AppHttpResponse {
         else tier600Plus = tier600Plus + 1;
 
         if (prod.isFlashSale) flashCount = flashCount + 1;
-        if (prod.totalStock < 120) lowStockCount = lowStockCount + 1;
+        for (let v = 0; v < prod.variants.length(); v++) {
+            if (prod.variants[v].stock < 10) {
+                lowStockCount = lowStockCount + 1;
+            }
+        }
     }
 
     // Build category array
@@ -513,15 +521,56 @@ export function handleGetFacets(ctx: AppRouteContext): AppHttpResponse {
     return jsonSuccess("Faceted filter aggregations calculated", out);
 }
 
-// 9. Point-in-Time Order Snapshots Explorer
+// 9. Point-in-Time Order Snapshots Explorer (Role Scoped Access)
 export function handleListOrders(ctx: AppRouteContext): AppHttpResponse {
     let store = getMarketplaceStore();
+    let claimsOpt = getAuthenticatedClaims(ctx);
+    if (claimsOpt == None) {
+        return jsonError("Authentication is required to view orders", 401);
+    }
+    let claims = claimsOpt as TokenClaims;
+    let queryVendorId: string = ctx.query("vendorId", "");
+    let queryCustomerId: string = ctx.query("customerId", "");
+
     let keys = store.invoices.keys();
     let list: any[] = [];
     for (let i = 0; i < keys.length(); i++) {
-        let inv = store.invoices.get(keys[i]);
-        if (inv != None) {
-            list.push((inv as SnapshotInvoice).toJSON());
+        let invOpt = store.invoices.get(keys[i]);
+        if (invOpt == None) continue;
+        let inv = invOpt as SnapshotInvoice;
+
+        if (isAdmin(claims)) {
+            if (queryCustomerId != "" && inv.customerId != queryCustomerId) {
+                continue;
+            }
+            if (queryVendorId != "") {
+                let hasVendorItem: bool = false;
+                for (let j = 0; j < inv.items.length(); j++) {
+                    if (inv.items[j].vendorId == queryVendorId) {
+                        hasVendorItem = true;
+                        break;
+                    }
+                }
+                if (!hasVendorItem) continue;
+            }
+            list.push(inv.toJSON());
+        } else if (claims.role == "vendor") {
+            let vId: string = claims.vendorId;
+            let hasItem: bool = false;
+            for (let j = 0; j < inv.items.length(); j++) {
+                if (inv.items[j].vendorId == vId) {
+                    hasItem = true;
+                    break;
+                }
+            }
+            if (hasItem) {
+                list.push(inv.toJSON());
+            }
+        } else {
+            let isOwner: bool = (claims.sub != "" && inv.customerId == claims.sub) || (claims.email != "" && inv.customerEmail == claims.email);
+            if (isOwner) {
+                list.push(inv.toJSON());
+            }
         }
     }
     let out: JsonObject = objectOf({});
@@ -533,11 +582,38 @@ export function handleListOrders(ctx: AppRouteContext): AppHttpResponse {
 export function handleGetOrderDetails(ctx: AppRouteContext): AppHttpResponse {
     let orderId: string = ctx.param("orderId");
     let store = getMarketplaceStore();
-    let inv = store.invoices.get(orderId);
-    if (inv == None) {
+    let claimsOpt = getAuthenticatedClaims(ctx);
+    if (claimsOpt == None) {
+        return jsonError("Authentication is required to view order details", 401);
+    }
+    let claims = claimsOpt as TokenClaims;
+    let invOpt = store.invoices.get(orderId);
+    if (invOpt == None) {
         return jsonError("Snapshot invoice not found for order " + orderId, 404);
     }
-    let out: JsonObject = objectOf((inv as SnapshotInvoice).toJSON());
+    let inv = invOpt as SnapshotInvoice;
+
+    if (!isAdmin(claims)) {
+        if (claims.role == "vendor") {
+            let hasItem: bool = false;
+            for (let j = 0; j < inv.items.length(); j++) {
+                if (inv.items[j].vendorId == claims.vendorId) {
+                    hasItem = true;
+                    break;
+                }
+            }
+            if (!hasItem) {
+                return jsonError("Unauthorized: This order does not contain items from your storefront", 403);
+            }
+        } else {
+            let isOwner: bool = (claims.sub != "" && inv.customerId == claims.sub) || (claims.email != "" && inv.customerEmail == claims.email);
+            if (!isOwner) {
+                return jsonError("Unauthorized: You do not have access to view this order", 403);
+            }
+        }
+    }
+
+    let out: JsonObject = objectOf(inv.toJSON());
     return jsonSuccess("Point-in-time invoice snapshot fetched", out);
 }
 
@@ -590,6 +666,43 @@ export function handleSaveProduct(ctx: AppRouteContext): AppHttpResponse {
         existing.flashDiscountPercent = flashDiscountPercent;
         if (bodyObj["specifications"] != None) {
             existing.specifications = String(bodyObj["specifications"]);
+        }
+
+        if (bodyObj["variants"] != None) {
+            try {
+                let rawVars: any[] = bodyObj["variants"] as any[];
+                let updatedVars: MarketplaceVariant[] = [];
+                for (let vi = 0; vi < rawVars.length(); vi++) {
+                    let vItem: any = rawVars[vi];
+                    let vSku: string = vItem["sku"] != None ? String(vItem["sku"]) : ("SKU-" + String(now()) + "-" + String(vi));
+                    let vName: string = vItem["name"] != None ? String(vItem["name"]) : (title + " (Variant)");
+                    let vPrice: float = vItem["price"] != None ? (vItem["price"] as float) : existing.basePrice;
+                    let vStock: int = vItem["stock"] != None ? (vItem["stock"] as int) : 25;
+                    updatedVars.push(new MarketplaceVariant(
+                        vSku,
+                        vName,
+                        "Standard",
+                        vPrice,
+                        vStock,
+                        [new WarehouseStock("WH-PRIMARY", vStock)]
+                    ));
+                }
+                if (updatedVars.length() > 0) {
+                    existing.variants = updatedVars;
+                    let computedStock: int = 0;
+                    let minP: float = updatedVars[0].price;
+                    for (let usi = 0; usi < updatedVars.length(); usi++) {
+                        computedStock = computedStock + updatedVars[usi].stock;
+                        if (updatedVars[usi].price < minP) {
+                            minP = updatedVars[usi].price;
+                        }
+                    }
+                    existing.totalStock = computedStock;
+                    existing.basePrice = minP;
+                    existing.salePrice = isFlashSale && flashDiscountPercent > 0 ? (minP * (1.0 - ((flashDiscountPercent as float) / 100.0))) : minP;
+                }
+            } catch (e) {
+            }
         }
 
         store.products.set(existing.id, existing);
@@ -777,6 +890,11 @@ export function handleDeleteProduct(ctx: AppRouteContext): AppHttpResponse {
 // 12. Update Order Fulfillment Status
 export function handleUpdateOrderFulfillment(ctx: AppRouteContext): AppHttpResponse {
     let store = getMarketplaceStore();
+    let claimsOpt = getAuthenticatedClaims(ctx);
+    if (claimsOpt == None) {
+        return jsonError("Authentication is required to update order fulfillment", 401);
+    }
+    let claims = claimsOpt as TokenClaims;
     let orderId: string = ctx.param("orderId");
     let rawBody: string = ctx.request.body;
     let bodyObj: any = {};
@@ -793,6 +911,23 @@ export function handleUpdateOrderFulfillment(ctx: AppRouteContext): AppHttpRespo
     }
 
     let inv = invOpt as SnapshotInvoice;
+
+    if (!isAdmin(claims)) {
+        if (claims.role != "vendor" || !hasPermission(claims, "orders:fulfill")) {
+            return jsonError("You do not have permission to fulfill orders", 403);
+        }
+        let hasItem: bool = false;
+        for (let j = 0; j < inv.items.length(); j++) {
+            if (inv.items[j].vendorId == claims.vendorId) {
+                hasItem = true;
+                break;
+            }
+        }
+        if (!hasItem) {
+            return jsonError("Unauthorized: Cannot fulfill an order that contains no items for your storefront", 403);
+        }
+    }
+
     inv.status = newStatus;
     store.invoices.set(orderId, inv);
     store.persistInvoice(inv);
@@ -810,6 +945,7 @@ export function handleUpdateOrderFulfillment(ctx: AppRouteContext): AppHttpRespo
 // 14. Multi-Tenant Vendor Storefronts Directory & Management
 export function handleListVendors(ctx: AppRouteContext): AppHttpResponse {
     let store = getMarketplaceStore();
+    store.reloadVendorsFromMongo();
     let vendorList: any[] = [];
     for (let i = 0; i < store.vendorIds.length(); i++) {
         let vOpt = store.vendors.get(store.vendorIds[i]);
@@ -824,6 +960,13 @@ export function handleListVendors(ctx: AppRouteContext): AppHttpResponse {
 }
 
 export function handleCreateVendor(ctx: AppRouteContext): AppHttpResponse {
+    let claimsOpt = getAuthenticatedClaims(ctx);
+    if (claimsOpt == None) return jsonError("Authentication is required", 401);
+    let claims = claimsOpt as TokenClaims;
+    if (!isAdmin(claims) && !hasPermission(claims, "storefront:write")) {
+        return jsonError("Only administrators can register new storefronts", 403);
+    }
+
     let rawBody: string = ctx.request.body;
     let bodyObj: any = {};
     if (rawBody != "") {
@@ -848,7 +991,7 @@ export function handleCreateVendor(ctx: AppRouteContext): AppHttpResponse {
     let commissionRate: float = 0.12;
     let cancellationRate: float = 0.005;
     let activeSkus: int = 0;
-    let status: string = "active";
+    let status: string = bodyObj["status"] != None ? String(bodyObj["status"]) : "active";
 
     let vendor = new MarketplaceVendor(id, name, tier, rating, commissionRate, cancellationRate, activeSkus, status);
     store.addVendor(vendor);
@@ -864,7 +1007,7 @@ export function handleUpdateVendor(ctx: AppRouteContext): AppHttpResponse {
     let claimsOpt = getAuthenticatedClaims(ctx);
     if (claimsOpt == None) return jsonError("Authentication is required", 401);
     let claims = claimsOpt as TokenClaims;
-    if (!isAdmin(claims) && !mayManageVendor(claims, vendorId, "storefront:write")) {
+    if (!isAdmin(claims) && !mayManageVendor(claims, vendorId, "storefront:write") && claims.vendorId != vendorId) {
         return jsonError("Unauthorized to update this storefront", 403);
     }
 
@@ -882,10 +1025,33 @@ export function handleUpdateVendor(ctx: AppRouteContext): AppHttpResponse {
     }
 
     if (bodyObj["name"] != None && String(bodyObj["name"]).trim() != "") {
-        v.name = String(bodyObj["name"]).trim();
+        let newName = String(bodyObj["name"]).trim();
+        v.name = newName;
+        // Synchronize denormalized vendorName across active catalog products
+        for (let i = 0; i < store.productIds.length(); i++) {
+            let pOpt = store.products.get(store.productIds[i]);
+            if (pOpt != None) {
+                let p = pOpt as MarketplaceProduct;
+                if (p.vendorId == v.id) {
+                    p.vendorName = newName;
+                    store.products.set(p.id, p);
+                    store.persistProduct(p);
+                }
+            }
+        }
     }
     if (bodyObj["tier"] != None) v.tier = String(bodyObj["tier"]);
     if (bodyObj["status"] != None) v.status = String(bodyObj["status"]);
+    if (bodyObj["commissionRate"] != None) {
+        try {
+            v.commissionRate = bodyObj["commissionRate"] as float;
+        } catch (e) {}
+    }
+    if (bodyObj["rating"] != None) {
+        try {
+            v.rating = bodyObj["rating"] as float;
+        } catch (e) {}
+    }
 
     store.vendors.set(v.id, v);
     store.persistVendor(v);
@@ -901,34 +1067,76 @@ export function handleDeleteVendor(ctx: AppRouteContext): AppHttpResponse {
     let claimsOpt = getAuthenticatedClaims(ctx);
     if (claimsOpt == None) return jsonError("Authentication is required", 401);
     let claims = claimsOpt as TokenClaims;
-    if (!isAdmin(claims)) return jsonError("Only administrators can delete storefronts", 403);
+    if (!isAdmin(claims) && !mayManageVendor(claims, vendorId, "storefront:delete") && claims.vendorId != vendorId) {
+        return jsonError("Unauthorized to delete this storefront", 403);
+    }
 
     let store = getMarketplaceStore();
     let vOpt = store.vendors.get(vendorId);
     if (vOpt == None) return jsonError("Storefront not found: " + vendorId, 404);
 
+    let force: bool = ctx.query("force", "") == "true";
+    let rawBody: string = ctx.request.body;
+    if (!force && rawBody != "") {
+        try {
+            let bodyObj: any = parseJson(rawBody);
+            if (bodyObj["force"] != None && (bodyObj["force"] as bool)) {
+                force = true;
+            }
+        } catch (e) {}
+    }
+
     // Check if any products reference this storefront
+    let pCount: int = 0;
     for (let i = 0; i < store.productIds.length(); i++) {
         let pOpt = store.products.get(store.productIds[i]);
         if (pOpt != None) {
             let p = pOpt as MarketplaceProduct;
             if (p.vendorId == vendorId) {
-                return jsonError("Cannot delete storefront: it has active products in catalog. Remove products first.", 400);
+                pCount = pCount + 1;
             }
         }
     }
 
+    if (pCount > 0 && !force) {
+        return jsonError("Cannot delete storefront: it has " + String(pCount) + " active products in catalog. Remove products first or select Force Delete.", 400);
+    }
+
     // Check if any historical orders reference this storefront
     let invKeys = store.invoices.keys();
+    let hasOrders: bool = false;
     for (let i = 0; i < invKeys.length(); i++) {
         let invOpt = store.invoices.get(invKeys[i]);
         if (invOpt != None) {
             let inv = invOpt as SnapshotInvoice;
             for (let j = 0; j < inv.items.length(); j++) {
                 if (inv.items[j].vendorId == vendorId) {
-                    return jsonError("Cannot delete storefront: historical orders exist for this vendor.", 400);
+                    hasOrders = true;
+                    break;
                 }
             }
+        }
+        if (hasOrders) break;
+    }
+
+    if (hasOrders && !force) {
+        return jsonError("Cannot delete storefront: historical orders exist for this vendor. Select Force Delete to proceed.", 400);
+    }
+
+    // If force is enabled, purge associated products
+    if (force && pCount > 0) {
+        let toDelete: string[] = [];
+        for (let i = 0; i < store.productIds.length(); i++) {
+            let pOpt = store.products.get(store.productIds[i]);
+            if (pOpt != None) {
+                let p = pOpt as MarketplaceProduct;
+                if (p.vendorId == vendorId) {
+                    toDelete.push(p.id);
+                }
+            }
+        }
+        for (let i = 0; i < toDelete.length(); i++) {
+            store.deleteProduct(toDelete[i]);
         }
     }
 

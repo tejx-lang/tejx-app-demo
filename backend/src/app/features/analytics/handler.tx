@@ -11,6 +11,24 @@ import { Map } from "std:collections";
 export function handleGetPlatformFinancialMatrix(ctx: AppRouteContext): AppHttpResponse {
     let store = getMarketplaceStore();
     let period: string = ctx.query("period", "daily").toLowerCase();
+    let vendorFilter: string = ctx.query("vendorId", "").trim();
+    if (vendorFilter == "") {
+        vendorFilter = ctx.query("store", "").trim();
+    }
+
+    let currentTime: int64 = now();
+    let cutoff: int64 = 0;
+    if (period == "hourly" || period == "1h" || period == "lasthour" || period == "last_hour") {
+        cutoff = currentTime - 3600000;
+    } else if (period == "daily" || period == "24h" || period == "today" || period == "last_24h") {
+        cutoff = currentTime - 86400000;
+    } else if (period == "weekly" || period == "7d" || period == "last_7d") {
+        cutoff = currentTime - 604800000;
+    } else if (period == "monthly" || period == "30d" || period == "last_30d") {
+        cutoff = currentTime - 2592000000;
+    } else {
+        cutoff = 0;
+    }
 
     let totalGmv: float = 0.0;
     let totalTax: float = 0.0;
@@ -18,10 +36,9 @@ export function handleGetPlatformFinancialMatrix(ctx: AppRouteContext): AppHttpR
     let totalProcessingFees: float = 0.0;
     let totalVendorPayouts: float = 0.0;
     let totalUnitsSold: int = 0;
+    let matchingInvoiceCount: int = 0;
 
     let invoiceKeys = store.invoices.keys();
-    let invoiceCount: int = invoiceKeys.length();
-
     let recentInvoices: any[] = [];
 
     // Track per-vendor GMV for payout schedules
@@ -33,28 +50,55 @@ export function handleGetPlatformFinancialMatrix(ctx: AppRouteContext): AppHttpR
         if (invOpt == None) continue;
         let inv = invOpt as SnapshotInvoice;
 
-        totalGmv = totalGmv + inv.grossMerchandiseValue;
-        totalTax = totalTax + inv.totalTax;
-        totalPlatformCommission = totalPlatformCommission + inv.totalPlatformCommission;
-        totalProcessingFees = totalProcessingFees + inv.paymentProcessingFee;
-        totalVendorPayouts = totalVendorPayouts + inv.netVendorPayout;
+        // Apply time period cutoff
+        if (cutoff > 0 && inv.createdAt < cutoff) {
+            continue;
+        }
+
+        let invMatchesVendor: bool = false;
+        let invGmv: float = 0.0;
+        let invTax: float = 0.0;
+        let invComm: float = 0.0;
+        let invFee: float = 0.0;
+        let invPayout: float = 0.0;
+        let invUnits: int = 0;
 
         for (let j = 0; j < inv.items.length(); j++) {
-            totalUnitsSold = totalUnitsSold + inv.items[j].quantity;
+            let it = inv.items[j];
+            let vid: string = it.vendorId;
+            let vname: string = it.vendorName;
 
-            let vendId: string = inv.items[j].vendorId;
-            let vendName: string = inv.items[j].vendorName;
-            let existingPayout = vendorPayoutMap.get(vendId);
-            if (existingPayout == None) {
-                vendorPayoutMap.set(vendId, inv.items[j].vendorPayout);
-                vendorNameMap.set(vendId, vendName);
-            } else {
-                vendorPayoutMap.set(vendId, (existingPayout as float) + inv.items[j].vendorPayout);
+            if (vendorFilter == "" || vendorFilter == "all" || vid == vendorFilter) {
+                invMatchesVendor = true;
+                invGmv = invGmv + it.subtotal;
+                invTax = invTax + it.taxAmount;
+                invComm = invComm + it.commissionAmount;
+                invFee = invFee + (it.subtotal * 0.029);
+                invPayout = invPayout + it.vendorPayout;
+                invUnits = invUnits + it.quantity;
+
+                let existingPayout = vendorPayoutMap.get(vid);
+                if (existingPayout == None) {
+                    vendorPayoutMap.set(vid, it.vendorPayout);
+                    vendorNameMap.set(vid, vname);
+                } else {
+                    vendorPayoutMap.set(vid, (existingPayout as float) + it.vendorPayout);
+                }
             }
         }
 
-        if (recentInvoices.length() < 10) {
-            recentInvoices.push(inv.toJSON());
+        if (invMatchesVendor) {
+            totalGmv = totalGmv + invGmv;
+            totalTax = totalTax + invTax;
+            totalPlatformCommission = totalPlatformCommission + invComm;
+            totalProcessingFees = totalProcessingFees + invFee;
+            totalVendorPayouts = totalVendorPayouts + invPayout;
+            totalUnitsSold = totalUnitsSold + invUnits;
+            matchingInvoiceCount = matchingInvoiceCount + 1;
+
+            if (recentInvoices.length() < 10) {
+                recentInvoices.push(inv.toJSON());
+            }
         }
     }
 
@@ -80,16 +124,17 @@ export function handleGetPlatformFinancialMatrix(ctx: AppRouteContext): AppHttpR
     }
 
     let aov: float = 0.0;
-    if (invoiceCount > 0) aov = totalGmv / (invoiceCount as float);
+    if (matchingInvoiceCount > 0) aov = totalGmv / (matchingInvoiceCount as float);
 
     let out: JsonObject = objectOf({});
     out.setString("trackingPeriod", period);
+    out.setString("selectedStore", vendorFilter != "" ? vendorFilter : "all");
     out.setFloat("grossMerchandiseValue", totalGmv);
     out.setFloat("platformCommissionRevenue", totalPlatformCommission);
     out.setFloat("paymentGatewayFees", totalProcessingFees);
     out.setFloat("totalTaxCollected", totalTax);
     out.setFloat("netVendorPayoutReserve", totalVendorPayouts);
-    out.setInt("settledTransactionsCount", invoiceCount);
+    out.setInt("settledTransactionsCount", matchingInvoiceCount);
     out.setInt("totalUnitsSold", totalUnitsSold);
     out.setFloat("averageOrderValue", aov);
     out.setBool("materializedViewCacheHit", true);
@@ -103,33 +148,52 @@ export function handleGetPlatformFinancialMatrix(ctx: AppRouteContext): AppHttpR
 // 2. Platform Commission Ledger & Audit Trail
 export function handleGetCommissionLedger(ctx: AppRouteContext): AppHttpResponse {
     let store = getMarketplaceStore();
-    let invoiceKeys = store.invoices.keys();
+    let vendorFilter: string = ctx.query("vendorId", "").trim();
+    if (vendorFilter == "") {
+        vendorFilter = ctx.query("store", "").trim();
+    }
+    let period: string = ctx.query("period", "all").toLowerCase();
+    let currentTime: int64 = now();
+    let cutoff: int64 = 0;
+    if (period == "hourly" || period == "1h" || period == "lasthour" || period == "last_hour") {
+        cutoff = currentTime - 3600000;
+    } else if (period == "daily" || period == "24h" || period == "today" || period == "last_24h") {
+        cutoff = currentTime - 86400000;
+    } else if (period == "weekly" || period == "7d" || period == "last_7d") {
+        cutoff = currentTime - 604800000;
+    } else if (period == "monthly" || period == "30d" || period == "last_30d") {
+        cutoff = currentTime - 2592000000;
+    }
 
+    let invoiceKeys = store.invoices.keys();
     let ledgerEntries: any[] = [];
     for (let i = 0; i < invoiceKeys.length(); i++) {
         let invOpt = store.invoices.get(invoiceKeys[i]);
         if (invOpt == None) continue;
         let inv = invOpt as SnapshotInvoice;
+        if (cutoff > 0 && inv.createdAt < cutoff) continue;
 
         for (let j = 0; j < inv.items.length(); j++) {
             let item = inv.items[j];
-            let entryRef: string = "LEDGER-" + inv.orderId + "-" + String(j + 1);
-            ledgerEntries.push({
-                "entryRef": entryRef,
-                "orderId": inv.orderId,
-                "correlationId": inv.correlationId,
-                "vendorId": item.vendorId,
-                "vendorName": item.vendorName,
-                "sku": item.sku,
-                "itemTitle": item.title,
-                "grossSubtotal": item.subtotal,
-                "platformCommissionCut": item.commissionAmount,
-                "commissionRate": inv.platformCommissionRate,
-                "taxAmount": item.taxAmount,
-                "netVendorCredit": item.vendorPayout,
-                "settlementStatus": inv.status,
-                "createdAt": inv.createdAt
-            });
+            if (vendorFilter == "" || vendorFilter == "all" || item.vendorId == vendorFilter) {
+                let entryRef: string = "LEDGER-" + inv.orderId + "-" + String(j + 1);
+                ledgerEntries.push({
+                    "entryRef": entryRef,
+                    "orderId": inv.orderId,
+                    "correlationId": inv.correlationId,
+                    "vendorId": item.vendorId,
+                    "vendorName": item.vendorName,
+                    "sku": item.sku,
+                    "itemTitle": item.title,
+                    "grossSubtotal": item.subtotal,
+                    "platformCommissionCut": item.commissionAmount,
+                    "commissionRate": inv.platformCommissionRate,
+                    "taxAmount": item.taxAmount,
+                    "netVendorCredit": item.vendorPayout,
+                    "settlementStatus": inv.status,
+                    "createdAt": inv.createdAt
+                });
+            }
         }
     }
 
@@ -143,6 +207,23 @@ export function handleGetCommissionLedger(ctx: AppRouteContext): AppHttpResponse
 // 3. Top-K Analytical Grouping (Rankings by Revenue and Sales Volume)
 export function handleGetTopKAnalytics(ctx: AppRouteContext): AppHttpResponse {
     let store = getMarketplaceStore();
+    let vendorFilter: string = ctx.query("vendorId", "").trim();
+    if (vendorFilter == "") {
+        vendorFilter = ctx.query("store", "").trim();
+    }
+    let period: string = ctx.query("period", "all").toLowerCase();
+    let currentTime: int64 = now();
+    let cutoff: int64 = 0;
+    if (period == "hourly" || period == "1h" || period == "lasthour" || period == "last_hour") {
+        cutoff = currentTime - 3600000;
+    } else if (period == "daily" || period == "24h" || period == "today" || period == "last_24h") {
+        cutoff = currentTime - 86400000;
+    } else if (period == "weekly" || period == "7d" || period == "last_7d") {
+        cutoff = currentTime - 604800000;
+    } else if (period == "monthly" || period == "30d" || period == "last_30d") {
+        cutoff = currentTime - 2592000000;
+    }
+
     let k: int = 5;
     let kParam: string = ctx.query("k", "5");
     if (kParam != "") {
@@ -161,8 +242,13 @@ export function handleGetTopKAnalytics(ctx: AppRouteContext): AppHttpResponse {
         let invOpt = store.invoices.get(invoiceKeys[i]);
         if (invOpt == None) continue;
         let inv = invOpt as SnapshotInvoice;
+        if (cutoff > 0 && inv.createdAt < cutoff) continue;
+
         for (let j = 0; j < inv.items.length(); j++) {
             let item = inv.items[j];
+            if (vendorFilter != "" && vendorFilter != "all" && item.vendorId != vendorFilter) {
+                continue;
+            }
             let pid: string = item.productId;
 
             let existingRev = productRevenueMap.get(pid);
