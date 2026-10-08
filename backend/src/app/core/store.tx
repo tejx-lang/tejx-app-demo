@@ -97,46 +97,7 @@ export function deleteProductFromDb(id: string): void {
 }
 
 export function seedInitialData(state: AppState): void {
-    let t: int64 = now();
-
-    // 1. Initial Users
-    let u1 = new AppUser("usr-1", "Elena Vance", "elena@digitalnomad.io", "Lead Explorer", t);
-    let u2 = new AppUser("usr-2", "Kai Chen", "kai@remote-dev.co", "Cloud Architect", t);
-    let u3 = new AppUser("usr-3", "Sophia Miller", "sophia@traveler.org", "Content Creator", t);
-    state.users.add(u1.id, u1);
-    state.users.add(u2.id, u2);
-    state.users.add(u3.id, u3);
-
-    // 2. Initial Products
-    let p1 = new AppProduct("prd-1", "Starlink Mini Roam Kit", 599.00, "Connectivity", 42, t);
-    let p2 = new AppProduct("prd-2", "Noise-Cancelling Nomad Headphones", 249.50, "Audio", 85, t);
-    let p3 = new AppProduct("prd-3", "Ergonomic Portable Laptop Stand", 65.00, "Workstation", 120, t);
-    let p4 = new AppProduct("prd-4", "100W GaN Travel Fast Charger", 79.99, "Power", 200, t);
-    let p5 = new AppProduct("prd-5", "Passport RFID Anti-Theft Sling Bag", 45.00, "Luggage", 95, t);
-    state.products.add(p1.id, p1);
-    state.products.add(p2.id, p2);
-    state.products.add(p3.id, p3);
-    state.products.add(p4.id, p4);
-    state.products.add(p5.id, p5);
-
-    // 3. Initial Orders
-    let o1 = new AppOrder("ord-1", "usr-1", ["prd-1", "prd-3"], 664.00, "completed", t);
-    let o2 = new AppOrder("ord-2", "usr-2", ["prd-2", "prd-4"], 329.49, "pending", t);
-    state.orders.add(o1.id, o1);
-    state.orders.add(o2.id, o2);
-
-    // Persist seed data to MongoDB if connected
-    if (state.client != None) {
-        persistUser(u1);
-        persistUser(u2);
-        persistUser(u3);
-        persistProduct(p1);
-        persistProduct(p2);
-        persistProduct(p3);
-        persistProduct(p4);
-        persistProduct(p5);
-    }
-
+    // Database starts completely clean; all records are derived from MongoDB.
     recordAppEvent("system_boot", "System", "core-init");
 }
 
@@ -147,39 +108,39 @@ export function loadAppStateFromMongoOrSeed(client: Optional<MongoDatabase>): Ap
         try {
             let db: MongoDatabase = client as MongoDatabase;
 
-                // Load persisted users
-                let existingUsers = db.find("users", new MongoJsonObject({}));
-                for (let i = 0; i < existingUsers.length(); i++) {
-                    let d = existingUsers[i];
-                    let u = new AppUser(
-                        d.string("id"),
-                        d.string("name"),
-                        d.string("email"),
-                        d.string("role"),
-                        d.int("createdAt") as int64
-                    );
-                    state.users.add(u.id, u);
-                }
+            // Load persisted users
+            let existingUsers = db.find("users", new MongoJsonObject({}));
+            for (let i = 0; i < existingUsers.length(); i++) {
+                let d = existingUsers[i];
+                let u = new AppUser(
+                    d.string("id"),
+                    d.string("name"),
+                    d.string("email"),
+                    d.string("role"),
+                    d.int("createdAt") as int64
+                );
+                state.users.add(u.id, u);
+            }
 
-                // Load persisted products
-                let existingProds = db.find("products", new MongoJsonObject({}));
-                for (let i = 0; i < existingProds.length(); i++) {
-                    let d = existingProds[i];
-                    let p = new AppProduct(
-                        d.string("id"),
-                        d.string("name"),
-                        d.float("price"),
-                        d.string("category"),
-                        d.int("stock"),
-                        d.int("createdAt") as int64
-                    );
-                    state.products.add(p.id, p);
-                }
+            // Load persisted products
+            let existingProds = db.find("products", new MongoJsonObject({}));
+            for (let i = 0; i < existingProds.length(); i++) {
+                let d = existingProds[i];
+                let p = new AppProduct(
+                    d.string("id"),
+                    d.string("name"),
+                    d.float("price"),
+                    d.string("category"),
+                    d.int("stock"),
+                    d.int("createdAt") as int64
+                );
+                state.products.add(p.id, p);
+            }
 
             recordAppEvent("mongo_hydrated", "Database", "loaded_collections");
             return state;
         } catch (e) {
-            print("[warn] MongoDB read failed (" + String(e) + "). Falling back to initial seed.");
+            print("[warn] MongoDB read failed: " + String(e));
         }
     }
 

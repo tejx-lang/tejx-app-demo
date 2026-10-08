@@ -27,6 +27,13 @@ export function getMongoDatabase(): Optional<MongoDatabase> {
     return activeMongoDb;
 }
 
+export function requireMongoDb(): MongoDatabase {
+    if (activeMongoDb == None || !isConnectedToMongo) {
+        throw new Error("MongoDB connection is required but unreachable");
+    }
+    return activeMongoDb as MongoDatabase;
+}
+
 export function isMongoActive(): bool {
     return isConnectedToMongo;
 }

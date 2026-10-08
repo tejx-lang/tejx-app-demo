@@ -1,9 +1,12 @@
 // Enterprise Multi-Vendor Marketplace Request Handlers
 import { now } from "std:time";
+import { Map } from "std:collections";
 import { AppRouteContext, AppHttpResponse } from "../../../server/index.tx";
 import { jsonSuccess, jsonError } from "../../core/responses.tx";
 import { JsonObject, objectOf, parseJson } from "../../helpers/json.tx";
 import { getMarketplaceStore } from "./store.tx";
+import { getAuthenticatedClaims, hasPermission } from "../auth/handler.tx";
+import { TokenClaims } from "../auth/model.tx";
 import {
     MarketplaceProduct,
     MarketplaceVariant,
@@ -13,6 +16,14 @@ import {
     SnapshotInvoiceItem,
     MarketplaceVendor
 } from "./model.tx";
+
+function isAdmin(claims: TokenClaims): bool {
+    return hasPermission(claims, "*");
+}
+
+function mayManageVendor(claims: TokenClaims, vendorId: string, permission: string): bool {
+    return isAdmin(claims) || (hasPermission(claims, permission) && claims.vendorId == vendorId);
+}
 
 // 1. Faceted Catalog Browsing
 export function handleGetCatalog(ctx: AppRouteContext): AppHttpResponse {
@@ -67,6 +78,11 @@ export function handleGetProductDetails(ctx: AppRouteContext): AppHttpResponse {
 // 3. Atomic Distributed Checkout with Idempotency & Zero-Overdraft Protection
 export function handleCheckout(ctx: AppRouteContext): AppHttpResponse {
     let store = getMarketplaceStore();
+    let claimsOpt = getAuthenticatedClaims(ctx);
+    if (claimsOpt == None || !hasPermission(claimsOpt as TokenClaims, "checkout:execute")) {
+        return jsonError("A customer session with checkout permission is required", 403);
+    }
+    let claims = claimsOpt as TokenClaims;
 
     // 1. Extract X-Correlation-ID and X-Idempotency-Key
     let correlationId: string = ctx.request.header("x-correlation-id");
@@ -107,15 +123,10 @@ export function handleCheckout(ctx: AppRouteContext): AppHttpResponse {
     if (bodyObj["items"] != None) {
         itemsArr = bodyObj["items"] as any[];
     }
-    if (itemsArr.length() == 0) {
-        // Fallback default checkout item for quick testing
-        itemsArr = [
-            { "productId": "mp-starlink-roam", "sku": "SKU-SLM-100W", "quantity": 1 }
-        ];
-    }
+    if (itemsArr.length() == 0) return jsonError("At least one checkout item is required", 400);
 
-    let customerId: string = bodyObj["customerId"] != None ? String(bodyObj["customerId"]) : "usr-nomad-lead";
-    let customerEmail: string = bodyObj["customerEmail"] != None ? String(bodyObj["customerEmail"]) : "nomad@enterprise.io";
+    let customerId: string = claims.sub;
+    let customerEmail: string = claims.email;
 
     // 4. ZERO-OVERDRAFT PRE-FLIGHT CHECK ACROSS ALL VENDORS
     // If ANY item across any vendor has insufficient stock, we reject atomically (Zero-Overdraft)
@@ -124,6 +135,7 @@ export function handleCheckout(ctx: AppRouteContext): AppHttpResponse {
         let pId: string = String(itemReq["productId"]);
         let reqSku: string = String(itemReq["sku"]);
         let reqQty: int = itemReq["quantity"] != None ? (itemReq["quantity"] as int) : 1;
+        if (reqQty <= 0) return jsonError("Checkout quantities must be positive", 400);
 
         let p = store.products.get(pId);
         if (p == None) {
@@ -213,6 +225,7 @@ export function handleCheckout(ctx: AppRouteContext): AppHttpResponse {
                     vendorPayout
                 );
                 snapshotItems.push(snapItem);
+                store.persistProduct(prod);
                 break;
             }
         }
@@ -271,7 +284,13 @@ export function handleCheckout(ctx: AppRouteContext): AppHttpResponse {
 // 4. Multi-Tenant Vendor Inventory Management
 export function handleGetVendorInventory(ctx: AppRouteContext): AppHttpResponse {
     let store = getMarketplaceStore();
-    let vendorId: string = ctx.query("vendorId", "vnd-aurora");
+    let claimsOpt = getAuthenticatedClaims(ctx);
+    if (claimsOpt == None) return jsonError("Authentication is required", 401);
+    let claims = claimsOpt as TokenClaims;
+    let vendorId: string = ctx.query("vendorId", claims.vendorId);
+    if (vendorId == "" || !mayManageVendor(claims, vendorId, "inventory:manage")) {
+        return jsonError("You are not allowed to view this vendor inventory", 403);
+    }
 
     let inventoryList: any[] = [];
     let lowStockCount: int = 0;
@@ -314,6 +333,9 @@ export function handleGetVendorInventory(ctx: AppRouteContext): AppHttpResponse 
 // 5. Restock / Update SKU Warehouse stock
 export function handleUpdateVendorStock(ctx: AppRouteContext): AppHttpResponse {
     let store = getMarketplaceStore();
+    let claimsOpt = getAuthenticatedClaims(ctx);
+    if (claimsOpt == None) return jsonError("Authentication is required", 401);
+    let claims = claimsOpt as TokenClaims;
     let rawBody: string = ctx.request.body;
     let bodyObj: any = {};
     if (rawBody != "") {
@@ -325,11 +347,12 @@ export function handleUpdateVendorStock(ctx: AppRouteContext): AppHttpResponse {
     }
 
     let sku: string = bodyObj["sku"] != None ? String(bodyObj["sku"]) : "";
-    let addStock: int = bodyObj["addStock"] != None ? (bodyObj["addStock"] as int) : 50;
+    let addStock: int = bodyObj["addStock"] != None ? (bodyObj["addStock"] as int) : 0;
 
     if (sku == "") {
         return jsonError("SKU parameter is required", 400);
     }
+    if (addStock <= 0) return jsonError("Stock increment must be positive", 400);
 
     let updated: bool = false;
     let newStock: int = 0;
@@ -341,6 +364,9 @@ export function handleUpdateVendorStock(ctx: AppRouteContext): AppHttpResponse {
 
         for (let v = 0; v < prod.variants.length(); v++) {
             if (prod.variants[v].sku == sku) {
+                if (!mayManageVendor(claims, prod.vendorId, "inventory:manage")) {
+                    return jsonError("You are not allowed to change this inventory", 403);
+                }
                 prod.variants[v].stock = prod.variants[v].stock + addStock;
                 prod.totalStock = prod.totalStock + addStock;
                 newStock = prod.variants[v].stock;
@@ -383,21 +409,25 @@ export function handleGetPromotions(ctx: AppRouteContext): AppHttpResponse {
 // 7. Vendor Operational Health Metrics
 export function handleGetVendorMetrics(ctx: AppRouteContext): AppHttpResponse {
     let store = getMarketplaceStore();
-    let vendorId: string = ctx.query("vendorId", "vnd-aurora");
+    let vendorId: string = ctx.query("vendorId", "");
+    if (vendorId == "" && store.vendorIds.length() > 0) {
+        vendorId = store.vendorIds[0];
+    }
     let v = store.vendors.get(vendorId);
 
     let vObj: any = {};
     if (v != None) {
         vObj = (v as MarketplaceVendor).toJSON();
     } else {
+        let fallbackId: string = vendorId != "" ? vendorId : "unknown";
         vObj = {
-            "id": vendorId,
-            "name": "Global Nomad Partner",
-            "tier": "Verified Vendor",
-            "rating": 4.9,
-            "cancellationRate": 0.01,
+            "id": fallbackId,
+            "name": "Vendor Storefront",
+            "tier": "Standard Vendor",
+            "rating": 5.0,
+            "cancellationRate": 0.0,
             "commissionRate": 0.12,
-            "activeSkus": 12,
+            "activeSkus": 0,
             "status": "active"
         };
     }
@@ -412,8 +442,8 @@ export function handleGetVendorMetrics(ctx: AppRouteContext): AppHttpResponse {
 // 8. Dynamic Faceted Navigation Aggregations
 export function handleGetFacets(ctx: AppRouteContext): AppHttpResponse {
     let store = getMarketplaceStore();
-    let catCounts: any = {};
-    let brandCounts: any = {};
+    let catCountMap: Map<string, int> = new Map<string, int>();
+    let brandCountMap: Map<string, int> = new Map<string, int>();
     let tierUnder100: int = 0;
     let tier100to300: int = 0;
     let tier300to600: int = 0;
@@ -426,6 +456,22 @@ export function handleGetFacets(ctx: AppRouteContext): AppHttpResponse {
         if (pOpt == None) continue;
         let prod = pOpt as MarketplaceProduct;
 
+        // Category counts
+        let catExisting = catCountMap.get(prod.category);
+        if (catExisting == None) {
+            catCountMap.set(prod.category, 1);
+        } else {
+            catCountMap.set(prod.category, (catExisting as int) + 1);
+        }
+
+        // Brand counts
+        let brandExisting = brandCountMap.get(prod.brand);
+        if (brandExisting == None) {
+            brandCountMap.set(prod.brand, 1);
+        } else {
+            brandCountMap.set(prod.brand, (brandExisting as int) + 1);
+        }
+
         let price: float = prod.isFlashSale ? prod.salePrice : prod.basePrice;
         if (price < 100.0) tierUnder100 = tierUnder100 + 1;
         else if (price < 300.0) tier100to300 = tier100to300 + 1;
@@ -436,19 +482,25 @@ export function handleGetFacets(ctx: AppRouteContext): AppHttpResponse {
         if (prod.totalStock < 120) lowStockCount = lowStockCount + 1;
     }
 
+    // Build category array
+    let catKeys: string[] = catCountMap.keys();
+    let categoryList: any[] = [];
+    for (let i = 0; i < catKeys.length(); i++) {
+        let cnt = catCountMap.get(catKeys[i]);
+        categoryList.push({ "name": catKeys[i], "count": cnt != None ? (cnt as int) : 0 });
+    }
+
+    // Build brand array
+    let brandKeys: string[] = brandCountMap.keys();
+    let brandList: any[] = [];
+    for (let i = 0; i < brandKeys.length(); i++) {
+        let cnt = brandCountMap.get(brandKeys[i]);
+        brandList.push({ "name": brandKeys[i], "count": cnt != None ? (cnt as int) : 0 });
+    }
+
     let out: JsonObject = objectOf({});
-    out.setArray("categories", [
-        { "name": "Connectivity", "count": 1 },
-        { "name": "Audio", "count": 1 },
-        { "name": "Power", "count": 1 },
-        { "name": "Workstation", "count": 1 }
-    ]);
-    out.setArray("brands", [
-        { "name": "SpaceX Starlink", "count": 1 },
-        { "name": "Zenith Acoustic", "count": 1 },
-        { "name": "HyperGear", "count": 1 },
-        { "name": "Aurora Labs", "count": 1 }
-    ]);
+    out.setArray("categories", categoryList);
+    out.setArray("brands", brandList);
     out.setArray("priceBrackets", [
         { "label": "Under $100", "count": tierUnder100 },
         { "label": "$100 - $300", "count": tier100to300 },
@@ -502,30 +554,36 @@ export function handleSaveProduct(ctx: AppRouteContext): AppHttpResponse {
         }
     }
 
+    let claimsOpt = getAuthenticatedClaims(ctx);
+    if (claimsOpt == None) return jsonError("Authentication is required", 401);
+    let claims = claimsOpt as TokenClaims;
+
     let prodId: string = ctx.param("productId");
     if (prodId == "" && bodyObj["id"] != None) {
         prodId = String(bodyObj["id"]);
     }
 
-    let title: string = bodyObj["title"] != None ? String(bodyObj["title"]) : "";
+    let title: string = bodyObj["title"] != None ? String(bodyObj["title"]).trim() : "";
     if (title == "") {
         return jsonError("Product title is required", 400);
     }
 
     let category: string = bodyObj["category"] != None ? String(bodyObj["category"]) : "General";
-    let brand: string = bodyObj["brand"] != None ? String(bodyObj["brand"]) : "Aurora Labs";
     let basePrice: float = bodyObj["basePrice"] != None ? (bodyObj["basePrice"] as float) : 99.00;
     let salePrice: float = bodyObj["salePrice"] != None ? (bodyObj["salePrice"] as float) : basePrice;
     let isFlashSale: bool = bodyObj["isFlashSale"] != None ? (bodyObj["isFlashSale"] as bool) : false;
     let flashDiscountPercent: int = bodyObj["flashDiscountPercent"] != None ? (bodyObj["flashDiscountPercent"] as int) : 0;
-    let vendorId: string = bodyObj["vendorId"] != None ? String(bodyObj["vendorId"]) : "vnd-aurora";
 
     let existingOpt = prodId != "" ? store.products.get(prodId) : None;
     if (existingOpt != None) {
         let existing = existingOpt as MarketplaceProduct;
+        if (!isAdmin(claims) && !mayManageVendor(claims, existing.vendorId, "products:write")) {
+            return jsonError("Unauthorized to update product", 403);
+        }
+
         existing.title = title;
         existing.category = category;
-        existing.brand = brand;
+        if (bodyObj["brand"] != None) existing.brand = String(bodyObj["brand"]);
         existing.basePrice = basePrice;
         existing.salePrice = salePrice;
         existing.isFlashSale = isFlashSale;
@@ -541,27 +599,84 @@ export function handleSaveProduct(ctx: AppRouteContext): AppHttpResponse {
     }
 
     // New product creation
-    let newId: string = prodId != "" ? prodId : ("mp-prod-" + String(now()));
-    let vendorName: string = "Aurora Labs";
-    let vOpt = store.vendors.get(vendorId);
-    if (vOpt != None) {
-        vendorName = (vOpt as MarketplaceVendor).name;
+    let vendorId: string = bodyObj["vendorId"] != None ? String(bodyObj["vendorId"]).trim() : "";
+    if (vendorId == "") {
+        if (claims.role == "vendor" && claims.vendorId != "") {
+            vendorId = claims.vendorId;
+        } else if (store.vendorIds.length() > 0) {
+            vendorId = store.vendorIds[0];
+        }
     }
+
+    if (vendorId == "") {
+        return jsonError("A valid storefront vendor ID is required. Please create a storefront first.", 400);
+    }
+
+    if (!isAdmin(claims) && !mayManageVendor(claims, vendorId, "products:write")) {
+        return jsonError("Unauthorized to add products for storefront " + vendorId, 403);
+    }
+
+    let vOpt = store.vendors.get(vendorId);
+    if (vOpt == None) {
+        return jsonError("Storefront not found: " + vendorId, 404);
+    }
+    let vendor = vOpt as MarketplaceVendor;
+    let vendorName: string = vendor.name;
+    let brand: string = bodyObj["brand"] != None && String(bodyObj["brand"]).trim() != "" ? String(bodyObj["brand"]).trim() : vendor.name;
+
+    let newId: string = prodId != "" ? prodId : ("mp-prod-" + String(now()));
+    let stockVal: int = bodyObj["stock"] != None ? (bodyObj["stock"] as int) : 50;
 
     let defaultVariant = new MarketplaceVariant(
         "SKU-" + String(now()),
         title + " (Standard)",
         "Standard Edition",
         basePrice,
-        60,
-        [new WarehouseStock("WH-US-EAST", 40), new WarehouseStock("WH-EU-WEST", 20)]
+        stockVal,
+        [new WarehouseStock("WH-PRIMARY", stockVal)]
     );
+
+    let finalVariants: MarketplaceVariant[] = [];
+    if (bodyObj["variants"] != None) {
+        try {
+            let rawVars: any[] = bodyObj["variants"] as any[];
+            for (let vi = 0; vi < rawVars.length(); vi++) {
+                let vItem: any = rawVars[vi];
+                let vSku: string = vItem["sku"] != None ? String(vItem["sku"]) : ("SKU-" + String(now()) + "-" + String(vi));
+                let vName: string = vItem["name"] != None ? String(vItem["name"]) : (title + " (Variant)");
+                let vPrice: float = vItem["price"] != None ? (vItem["price"] as float) : salePrice;
+                let vStock: int = vItem["stock"] != None ? (vItem["stock"] as int) : stockVal;
+                finalVariants.push(new MarketplaceVariant(
+                    vSku,
+                    vName,
+                    "Standard",
+                    vPrice,
+                    vStock,
+                    [new WarehouseStock("WH-PRIMARY", vStock)]
+                ));
+            }
+        } catch (e) {
+        }
+    }
+    if (finalVariants.length() == 0) {
+        finalVariants.push(defaultVariant);
+    }
+
+    let totalComputedStock: int = 0;
+    for (let si = 0; si < finalVariants.length(); si++) {
+        totalComputedStock = totalComputedStock + finalVariants[si].stock;
+    }
+
+    let prodImg: string = "https://images.unsplash.com/photo-1541185933-ef5d8ed016c2?w=600&auto=format&fit=crop&q=80";
+    if (bodyObj["image"] != None && String(bodyObj["image"]).trim() != "") {
+        prodImg = String(bodyObj["image"]).trim();
+    }
 
     let newProd = new MarketplaceProduct(
         newId,
         vendorId,
         vendorName,
-        4.95,
+        5.0,
         title,
         category,
         brand,
@@ -569,12 +684,12 @@ export function handleSaveProduct(ctx: AppRouteContext): AppHttpResponse {
         salePrice,
         isFlashSale,
         flashDiscountPercent,
-        [defaultVariant],
-        60,
+        finalVariants,
+        totalComputedStock,
         true,
         5.0,
-        1,
-        "https://images.unsplash.com/photo-1541185933-ef5d8ed016c2?w=600&auto=format&fit=crop&q=80",
+        0,
+        prodImg,
         now()
     );
 
@@ -586,30 +701,73 @@ export function handleSaveProduct(ctx: AppRouteContext): AppHttpResponse {
     store.productIds.push(newProd.id);
     store.persistProduct(newProd);
 
+    // Update activeSkus on storefront
+    vendor.activeSkus = vendor.activeSkus + 1;
+    store.vendors.set(vendor.id, vendor);
+    store.persistVendor(vendor);
+
     let out: JsonObject = objectOf(newProd.toJSON());
     return jsonSuccess("New product added to marketplace catalog", out);
 }
 
-// 11. Delete Product
+// 11. Delete Product (Audit-compliant: unlists if referenced in historical orders)
 export function handleDeleteProduct(ctx: AppRouteContext): AppHttpResponse {
     let store = getMarketplaceStore();
+    let claimsOpt = getAuthenticatedClaims(ctx);
+    if (claimsOpt == None) return jsonError("Authentication is required", 401);
+    let claims = claimsOpt as TokenClaims;
+
     let prodId: string = ctx.param("productId");
     if (prodId == "") {
         return jsonError("Product ID is required", 400);
     }
 
-    if (!store.products.has(prodId)) {
+    let p = store.products.get(prodId);
+    if (p == None) {
         return jsonError("Product not found", 404);
     }
 
-    store.products.delete(prodId);
-    let newIds: string[] = [];
-    for (let i = 0; i < store.productIds.length(); i++) {
-        if (store.productIds[i] != prodId) {
-            newIds.push(store.productIds[i]);
-        }
+    let prod = p as MarketplaceProduct;
+    if (!isAdmin(claims) && !mayManageVendor(claims, prod.vendorId, "products:write")) {
+        return jsonError("You do not have permission to delete this product", 403);
     }
-    store.productIds = newIds;
+
+    // Check if referenced in historical orders
+    let hasOrders: bool = false;
+    let invKeys = store.invoices.keys();
+    for (let i = 0; i < invKeys.length(); i++) {
+        let invOpt = store.invoices.get(invKeys[i]);
+        if (invOpt != None) {
+            let inv = invOpt as SnapshotInvoice;
+            for (let j = 0; j < inv.items.length(); j++) {
+                if (inv.items[j].productId == prodId) {
+                    hasOrders = true;
+                    break;
+                }
+            }
+        }
+        if (hasOrders) break;
+    }
+
+    if (hasOrders) {
+        prod.isListed = false;
+        store.products.set(prod.id, prod);
+        store.persistProduct(prod);
+        let out: JsonObject = objectOf({});
+        out.setString("unlistedId", prodId);
+        return jsonSuccess("Product has orders and was unlisted to preserve audit trail", out);
+    }
+
+    store.deleteProduct(prodId);
+
+    // Decrement activeSkus on storefront
+    let vOpt = store.vendors.get(prod.vendorId);
+    if (vOpt != None) {
+        let v = vOpt as MarketplaceVendor;
+        if (v.activeSkus > 0) v.activeSkus = v.activeSkus - 1;
+        store.vendors.set(v.id, v);
+        store.persistVendor(v);
+    }
 
     let out: JsonObject = objectOf({});
     out.setString("deletedId", prodId);
@@ -674,13 +832,17 @@ export function handleCreateVendor(ctx: AppRouteContext): AppHttpResponse {
         } catch (e) {}
     }
 
-    let name: string = bodyObj["name"] != None ? String(bodyObj["name"]) : "";
+    let name: string = bodyObj["name"] != None ? String(bodyObj["name"]).trim() : "";
     if (name == "") {
         return jsonError("Storefront name is required", 400);
     }
 
     let store = getMarketplaceStore();
-    let id: string = bodyObj["id"] != None && String(bodyObj["id"]) != "" ? String(bodyObj["id"]) : ("vnd-" + String(store.vendorIds.length() + 1));
+    let id: string = bodyObj["id"] != None && String(bodyObj["id"]).trim() != "" ? String(bodyObj["id"]).trim() : ("vnd-" + String(store.vendorIds.length() + 1));
+    if (store.vendors.has(id)) {
+        return jsonError("Storefront ID already exists: " + id, 409);
+    }
+
     let tier: string = bodyObj["tier"] != None ? String(bodyObj["tier"]) : "Verified Partner";
     let rating: float = 5.0;
     let commissionRate: float = 0.12;
@@ -695,4 +857,84 @@ export function handleCreateVendor(ctx: AppRouteContext): AppHttpResponse {
     return jsonSuccess("Storefront created successfully", out);
 }
 
+export function handleUpdateVendor(ctx: AppRouteContext): AppHttpResponse {
+    let vendorId: string = ctx.param("vendorId");
+    if (vendorId == "") return jsonError("Storefront ID is required", 400);
 
+    let claimsOpt = getAuthenticatedClaims(ctx);
+    if (claimsOpt == None) return jsonError("Authentication is required", 401);
+    let claims = claimsOpt as TokenClaims;
+    if (!isAdmin(claims) && !mayManageVendor(claims, vendorId, "storefront:write")) {
+        return jsonError("Unauthorized to update this storefront", 403);
+    }
+
+    let store = getMarketplaceStore();
+    let vOpt = store.vendors.get(vendorId);
+    if (vOpt == None) return jsonError("Storefront not found: " + vendorId, 404);
+    let v = vOpt as MarketplaceVendor;
+
+    let rawBody: string = ctx.request.body;
+    let bodyObj: any = {};
+    if (rawBody != "") {
+        try {
+            bodyObj = parseJson(rawBody);
+        } catch (e) {}
+    }
+
+    if (bodyObj["name"] != None && String(bodyObj["name"]).trim() != "") {
+        v.name = String(bodyObj["name"]).trim();
+    }
+    if (bodyObj["tier"] != None) v.tier = String(bodyObj["tier"]);
+    if (bodyObj["status"] != None) v.status = String(bodyObj["status"]);
+
+    store.vendors.set(v.id, v);
+    store.persistVendor(v);
+
+    let out: JsonObject = objectOf(v.toJSON());
+    return jsonSuccess("Storefront updated successfully", out);
+}
+
+export function handleDeleteVendor(ctx: AppRouteContext): AppHttpResponse {
+    let vendorId: string = ctx.param("vendorId");
+    if (vendorId == "") return jsonError("Storefront ID is required", 400);
+
+    let claimsOpt = getAuthenticatedClaims(ctx);
+    if (claimsOpt == None) return jsonError("Authentication is required", 401);
+    let claims = claimsOpt as TokenClaims;
+    if (!isAdmin(claims)) return jsonError("Only administrators can delete storefronts", 403);
+
+    let store = getMarketplaceStore();
+    let vOpt = store.vendors.get(vendorId);
+    if (vOpt == None) return jsonError("Storefront not found: " + vendorId, 404);
+
+    // Check if any products reference this storefront
+    for (let i = 0; i < store.productIds.length(); i++) {
+        let pOpt = store.products.get(store.productIds[i]);
+        if (pOpt != None) {
+            let p = pOpt as MarketplaceProduct;
+            if (p.vendorId == vendorId) {
+                return jsonError("Cannot delete storefront: it has active products in catalog. Remove products first.", 400);
+            }
+        }
+    }
+
+    // Check if any historical orders reference this storefront
+    let invKeys = store.invoices.keys();
+    for (let i = 0; i < invKeys.length(); i++) {
+        let invOpt = store.invoices.get(invKeys[i]);
+        if (invOpt != None) {
+            let inv = invOpt as SnapshotInvoice;
+            for (let j = 0; j < inv.items.length(); j++) {
+                if (inv.items[j].vendorId == vendorId) {
+                    return jsonError("Cannot delete storefront: historical orders exist for this vendor.", 400);
+                }
+            }
+        }
+    }
+
+    store.deleteVendor(vendorId);
+
+    let out: JsonObject = objectOf({});
+    out.setString("deletedVendorId", vendorId);
+    return jsonSuccess("Storefront deleted successfully", out);
+}

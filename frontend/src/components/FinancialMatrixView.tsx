@@ -141,7 +141,7 @@ export const FinancialMatrixView: React.FC<FinancialMatrixViewProps> = ({ curren
             <div>
               <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#1e293b' }}>
                 {currentProfile?.role === 'vendor'
-                  ? 'Aurora Labs Financial View (Vendor Mode)'
+                  ? `${currentProfile?.name || currentProfile?.vendorId || 'Vendor'} Financial View (Vendor Mode)`
                   : `Viewing Platform Analytics in Read-Only Mode (${currentProfile?.name || 'Customer / Guest'})`}
               </div>
               <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
@@ -151,7 +151,7 @@ export const FinancialMatrixView: React.FC<FinancialMatrixViewProps> = ({ curren
               </div>
             </div>
           </div>
-          {onSwitchRole && currentProfile?.role !== 'admin' && (
+          {onSwitchRole && currentProfile?.role !== 'admin' && currentProfile?.originalRole === 'admin' && (
             <button
               onClick={() => onSwitchRole('admin')}
               className="btn btn-secondary"

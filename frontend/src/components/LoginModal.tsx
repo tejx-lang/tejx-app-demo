@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { LogIn, Key, User, Shield, AlertCircle, X, CheckCircle } from 'lucide-react';
+import { LogIn, Key, User, Shield, AlertCircle, X } from 'lucide-react';
 import { loginWithCredentials, loginAs } from '../services/api';
 import { AuthProfile } from '../services/types';
 
@@ -10,8 +10,8 @@ interface LoginModalProps {
 }
 
 export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLoginSuccess }) => {
-  const [username, setUsername] = useState('admin');
-  const [password, setPassword] = useState('admin');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -37,20 +37,19 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLogin
     }
   };
 
-  const handleQuickFill = (u: string, p: string) => {
-    setUsername(u);
-    setPassword(p);
-    setError(null);
-  };
-
   const handleGuestBrowse = async () => {
     setLoading(true);
+    setError(null);
     try {
       const res = await loginAs('guest');
       if (res.success && res.data) {
         onLoginSuccess(res.data);
         onClose();
+      } else {
+        setError(res.error || 'Unable to start a guest browsing session. Please try again.');
       }
+    } catch (err: any) {
+      setError(err.message || 'Guest browsing is temporarily unavailable.');
     } finally {
       setLoading(false);
     }
@@ -77,7 +76,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLogin
       <div
         className="card"
         style={{
-          maxWidth: 440,
+          maxWidth: 420,
           width: '100%',
           background: '#ffffff',
           borderRadius: 16,
@@ -128,27 +127,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLogin
           </button>
         </div>
 
-        {/* Default Credential Notice */}
-        <div
-          style={{
-            padding: '10px 14px',
-            borderRadius: 8,
-            background: '#ecfdf5',
-            border: '1px solid #a7f3d0',
-            color: '#065f46',
-            fontSize: '0.8rem',
-            marginBottom: 16,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8
-          }}
-        >
-          <CheckCircle size={15} color="#059669" />
-          <span>
-            Default Super-Admin: <strong>admin</strong> / <strong>admin</strong>
-          </span>
-        </div>
-
         {error && (
           <div
             style={{
@@ -174,7 +152,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLogin
             <label
               style={{
                 fontSize: '0.775rem',
-                fontWeight: 600,
+                fontWeight: 650,
                 color: 'var(--text-secondary)',
                 display: 'block',
                 marginBottom: 6
@@ -188,8 +166,9 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLogin
                 className="input"
                 value={username}
                 onChange={e => setUsername(e.target.value)}
-                placeholder="admin"
+                placeholder="Enter username"
                 required
+                autoFocus
                 style={{ paddingLeft: 34, fontSize: '0.875rem' }}
               />
               <User
@@ -208,7 +187,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLogin
             <label
               style={{
                 fontSize: '0.775rem',
-                fontWeight: 600,
+                fontWeight: 650,
                 color: 'var(--text-secondary)',
                 display: 'block',
                 marginBottom: 6
@@ -249,95 +228,28 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLogin
           </button>
         </form>
 
-        {/* Quick Fill Preset Accounts */}
-        <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: 14, marginTop: 6 }}>
-          <span
+        {/* Clean Guest Browse Link */}
+        <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: 14, textAlign: 'center' }}>
+          <button
+            type="button"
+            onClick={handleGuestBrowse}
+            disabled={loading}
             style={{
-              fontSize: '0.725rem',
-              fontWeight: 700,
-              color: 'var(--text-tertiary)',
-              display: 'block',
-              marginBottom: 8,
-              textTransform: 'uppercase',
-              letterSpacing: '0.04em'
+              background: 'none',
+              border: 'none',
+              color: '#64748b',
+              fontSize: '0.775rem',
+              cursor: loading ? 'not-allowed' : 'pointer',
+              opacity: loading ? 0.6 : 1,
+              textDecoration: 'underline'
             }}
           >
-            Quick Select Preset Credentials:
-          </span>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginBottom: 12 }}>
-            <button
-              type="button"
-              onClick={() => handleQuickFill('admin', 'admin')}
-              className="segmented-nav-btn"
-              style={{
-                padding: '6px 8px',
-                fontSize: '0.75rem',
-                textAlign: 'center',
-                borderRadius: 8,
-                background: username === 'admin' ? '#ecfdf5' : '#f8fafc',
-                border: username === 'admin' ? '1px solid #a7f3d0' : '1px solid #e2e8f0',
-                color: username === 'admin' ? '#065f46' : 'var(--text-secondary)'
-              }}
-            >
-              <strong>admin</strong>
-              <div style={{ fontSize: '0.675rem', color: '#64748b' }}>Admin</div>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleQuickFill('vendor', 'vendor')}
-              className="segmented-nav-btn"
-              style={{
-                padding: '6px 8px',
-                fontSize: '0.75rem',
-                textAlign: 'center',
-                borderRadius: 8,
-                background: username === 'vendor' ? '#f5f3ff' : '#f8fafc',
-                border: username === 'vendor' ? '1px solid #ddd6fe' : '1px solid #e2e8f0',
-                color: username === 'vendor' ? '#5b21b6' : 'var(--text-secondary)'
-              }}
-            >
-              <strong>vendor</strong>
-              <div style={{ fontSize: '0.675rem', color: '#64748b' }}>Aurora</div>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleQuickFill('customer', 'customer')}
-              className="segmented-nav-btn"
-              style={{
-                padding: '6px 8px',
-                fontSize: '0.75rem',
-                textAlign: 'center',
-                borderRadius: 8,
-                background: username === 'customer' ? '#eff6ff' : '#f8fafc',
-                border: username === 'customer' ? '1px solid #bfdbfe' : '1px solid #e2e8f0',
-                color: username === 'customer' ? '#1e40af' : 'var(--text-secondary)'
-              }}
-            >
-              <strong>customer</strong>
-              <div style={{ fontSize: '0.675rem', color: '#64748b' }}>Elena</div>
-            </button>
-          </div>
-
-          <div style={{ textAlign: 'center' }}>
-            <button
-              type="button"
-              onClick={handleGuestBrowse}
-              style={{
-                background: 'none',
-                border: 'none',
-                color: '#64748b',
-                fontSize: '0.775rem',
-                cursor: 'pointer',
-                textDecoration: 'underline'
-              }}
-            >
-              Or continue browsing anonymously as Guest →
-            </button>
-          </div>
+            {loading ? 'Starting guest session…' : 'Or continue browsing anonymously as Guest →'}
+          </button>
         </div>
       </div>
     </div>
   );
 };
+
+export default LoginModal;

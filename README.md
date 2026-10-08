@@ -128,7 +128,15 @@ Both backend and frontend are configured via environment files:
 PORT=8080
 HOST=127.0.0.1
 MONGO_URI=mongodb://127.0.0.1:27017/tejx_nomad_db
+# Initial root administrator. Omit either value only for local development;
+# each falls back to admin.
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=admin
 ```
+
+The backend seeds this root account on startup. Anonymous visitors can create
+a browse-only guest session; only a verified root administrator can use the
+demo role switcher to enter the customer or vendor views.
 
 ### Frontend (`frontend/.env`)
 

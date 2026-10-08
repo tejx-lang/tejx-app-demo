@@ -15,6 +15,9 @@ Ultra high-performance distributed marketplace backend built in TejX, compiled n
   - `admin`: Super-admin platform controls, financial commission ledger, top-k analytics, and data lifecycle tiering.
 - **Granular Staff Permissions**: Vendors create restricted sub-accounts for staff (`inventory:read`, `inventory:write`, `orders:read`, `orders:fulfillment`, `finance:read`).
 - **Token Blacklist Cache**: Instant session revocation and logout with zero-latency in-memory and persistent blacklist checks.
+- **Session replacement**: A successful login or authorized role switch revokes
+  the token presented with that request, preventing an old elevated session
+  from remaining active.
 
 ### 🛍 2. Polymorphic Product Catalog Engine
 - **Polymorphic Variant Architecture**: Deep configuration options (combinations of size, color, storage, power, fabric) embedded directly within a single product document rather than split into multiple tables.
@@ -61,3 +64,9 @@ Ultra high-performance distributed marketplace backend built in TejX, compiled n
 - **Frontend UI**: http://localhost:3000
 - **TejX Backend API**: http://127.0.0.1:8080
 - **MongoDB Connection**: `mongodb://root:password@127.0.0.1:27017/tejx_marketplace_db?authSource=admin`
+
+### Initial administrator configuration
+
+Set `ADMIN_USERNAME` and `ADMIN_PASSWORD` in `backend/.env` before starting
+the service. The backend creates this protected root account at startup. When
+either setting is absent, the local-demo fallback is `admin` / `admin`.

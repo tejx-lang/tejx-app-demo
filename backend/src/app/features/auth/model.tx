@@ -93,6 +93,10 @@ export class TokenClaims {
     permissions: string[];
     iat: int64;
     exp: int64;
+    originalRole: string;
+    originalSub: string;
+    originalName: string;
+    originalVendorId: string;
 
     constructor(
         sub: string,
@@ -102,7 +106,11 @@ export class TokenClaims {
         vendorId: string,
         permissions: string[],
         iat: int64,
-        exp: int64
+        exp: int64,
+        originalRole: string = "",
+        originalSub: string = "",
+        originalName: string = "",
+        originalVendorId: string = ""
     ) {
         this.sub = sub;
         this.name = name;
@@ -112,6 +120,10 @@ export class TokenClaims {
         this.permissions = permissions;
         this.iat = iat;
         this.exp = exp;
+        this.originalRole = originalRole != "" ? originalRole : role;
+        this.originalSub = originalSub != "" ? originalSub : sub;
+        this.originalName = originalName != "" ? originalName : name;
+        this.originalVendorId = originalVendorId != "" ? originalVendorId : vendorId;
     }
 
     toJSON(): any {
@@ -124,6 +136,10 @@ export class TokenClaims {
         out.setStringArray("permissions", this.permissions);
         out.setInt64("iat", this.iat);
         out.setInt64("exp", this.exp);
+        out.setString("originalRole", this.originalRole);
+        out.setString("originalSub", this.originalSub);
+        out.setString("originalName", this.originalName);
+        out.setString("originalVendorId", this.originalVendorId);
         return out.toJSON();
     }
 }

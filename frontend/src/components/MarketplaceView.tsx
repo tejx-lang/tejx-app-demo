@@ -29,16 +29,18 @@ import {
   executeAtomicCheckout,
   saveProduct,
   deleteProduct,
-  fetchSnapshotOrders
+  fetchSnapshotOrders,
+  fetchStorefronts
 } from '../services/api';
-import { MarketplaceProduct, SnapshotInvoice, CatalogFacets, AuthProfile } from '../services/types';
+import { MarketplaceProduct, SnapshotInvoice, CatalogFacets, AuthProfile, VendorStorefront } from '../services/types';
 
 interface MarketplaceViewProps {
   currentProfile?: AuthProfile | null;
   onSwitchRole?: (role: 'guest' | 'customer' | 'vendor' | 'admin') => void;
+  onNavigateTab?: (tab: 'marketplace' | 'vendor' | 'financial' | 'security') => void;
 }
 
-export const MarketplaceView: React.FC<MarketplaceViewProps> = ({ currentProfile, onSwitchRole }) => {
+export const MarketplaceView: React.FC<MarketplaceViewProps> = ({ currentProfile, onSwitchRole, onNavigateTab }) => {
   const [activeSubTab, setActiveSubTab] = useState<'catalog' | 'orders'>('catalog');
   const [products, setProducts] = useState<MarketplaceProduct[]>([]);
   const [orders, setOrders] = useState<SnapshotInvoice[]>([]);
@@ -71,9 +73,11 @@ export const MarketplaceView: React.FC<MarketplaceViewProps> = ({ currentProfile
 
   // Add Product Modal State
   const [showAddModal, setShowAddModal] = useState(false);
+  const [storefronts, setStorefronts] = useState<VendorStorefront[]>([]);
+  const [selectedVendorId, setSelectedVendorId] = useState<string>('');
   const [newTitle, setNewTitle] = useState('');
   const [newCategory, setNewCategory] = useState('Connectivity');
-  const [newBrand, setNewBrand] = useState(currentProfile?.role === 'vendor' ? 'Aurora Labs' : 'Aura Labs');
+  const [newBrand, setNewBrand] = useState('');
   const [newBasePrice, setNewBasePrice] = useState(249);
   const [newSalePrice, setNewSalePrice] = useState(199);
   const [newFlashSale, setNewFlashSale] = useState(false);
@@ -93,7 +97,7 @@ export const MarketplaceView: React.FC<MarketplaceViewProps> = ({ currentProfile
   const loadData = async () => {
     setLoading(true);
     try {
-      const [catData, facetData, ordersData] = await Promise.all([
+      const [catData, facetData, ordersData, storefrontsData] = await Promise.all([
         fetchMarketplaceCatalog({
           search,
           category: selectedCategory === 'all' ? undefined : selectedCategory,
@@ -105,11 +109,18 @@ export const MarketplaceView: React.FC<MarketplaceViewProps> = ({ currentProfile
           category: selectedCategory === 'all' ? undefined : selectedCategory,
           brand: selectedBrand === 'all' ? undefined : selectedBrand
         }),
-        fetchSnapshotOrders()
+        fetchSnapshotOrders(),
+        fetchStorefronts()
       ]);
       setProducts(catData.products || []);
       setFacets(facetData);
       setOrders(ordersData.orders || []);
+      setStorefronts(storefrontsData);
+      if (storefrontsData.length > 0) {
+        const initialVnd = storefrontsData.find(s => s.id === currentProfile?.vendorId) || storefrontsData[0];
+        setSelectedVendorId(prev => prev || initialVnd.id);
+        setNewBrand(prev => prev || initialVnd.name);
+      }
     } finally {
       setLoading(false);
     }
@@ -201,13 +212,26 @@ export const MarketplaceView: React.FC<MarketplaceViewProps> = ({ currentProfile
     e.preventDefault();
     setIsAddingProduct(true);
     try {
-      const vendorId = currentProfile?.role === 'vendor' && currentProfile.vendorId ? currentProfile.vendorId : 'vnd-aurora';
-      const vendorName = currentProfile?.role === 'vendor' ? 'Aurora Labs' : 'Aura Marketplace Official';
+      const activeStorefront = storefronts.find(s => s.id === selectedVendorId) || storefronts[0];
+      const vendorId = currentProfile?.role === 'vendor' && currentProfile.vendorId
+        ? currentProfile.vendorId
+        : (activeStorefront ? activeStorefront.id : '');
+      const vendorName = currentProfile?.role === 'vendor'
+        ? (currentProfile.name || activeStorefront?.name || 'Vendor Store')
+        : (activeStorefront ? activeStorefront.name : (newBrand || 'Official Store'));
+
+      if (!vendorId) {
+        alert('Please create a storefront in the Vendor Portal before listing products.');
+        return;
+      }
+
+      const brandName = newBrand || (activeStorefront ? activeStorefront.name : 'Brand');
+      const skuPrefix = (brandName.length >= 3 ? brandName.substring(0, 3) : 'PRD').toUpperCase();
 
       const res = await saveProduct({
         title: newTitle,
         category: newCategory,
-        brand: newBrand,
+        brand: brandName,
         vendorId,
         vendorName,
         basePrice: Number(newBasePrice),
@@ -217,7 +241,7 @@ export const MarketplaceView: React.FC<MarketplaceViewProps> = ({ currentProfile
         specifications: newSpecs,
         variants: [
           {
-            sku: `${newBrand.substring(0, 3).toUpperCase()}-${Date.now().toString().slice(-4)}`,
+            sku: `${skuPrefix}-${Date.now().toString().slice(-4)}`,
             name: 'Standard Edition',
             price: Number(newSalePrice || newBasePrice),
             stock: Number(newStock) || 60,
@@ -395,7 +419,7 @@ export const MarketplaceView: React.FC<MarketplaceViewProps> = ({ currentProfile
       {currentProfile?.role === 'vendor' && (
         <div style={{ padding: '10px 16px', background: '#f5f3ff', border: '1px solid #ddd6fe', borderRadius: 10, marginBottom: '1.25rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.825rem', color: '#4c1d95', fontWeight: 600 }}>
-            <span>🏪 Seller Mode: Aurora Labs</span>
+            <span>🏪 Seller Mode: {currentProfile?.name || currentProfile?.vendorId || 'Vendor'}</span>
             <span style={{ fontWeight: 400, color: '#6d28d9' }}>• You have permissions to edit prices and stock on your products, or add new listings.</span>
           </div>
           <button onClick={() => setShowAddModal(true)} className="btn btn-primary" style={{ padding: '4px 10px', fontSize: '0.75rem' }}>
@@ -609,7 +633,37 @@ export const MarketplaceView: React.FC<MarketplaceViewProps> = ({ currentProfile
               </div>
             ) : products.length === 0 ? (
               <div className="card" style={{ padding: 48, textAlign: 'center', color: 'var(--text-secondary)' }}>
-                No products found matching the selected filters.
+                <div style={{ fontSize: '2.5rem', marginBottom: 12 }}>📦</div>
+                <div style={{ fontSize: '1.15rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: 6 }}>
+                  {search || selectedCategory !== 'all' || selectedBrand !== 'all'
+                    ? 'No products match your filters'
+                    : 'Marketplace Catalog is Empty'}
+                </div>
+                <p style={{ fontSize: '0.85rem', maxWidth: 460, margin: '0 auto 20px', lineHeight: 1.5 }}>
+                  {search || selectedCategory !== 'all' || selectedBrand !== 'all'
+                    ? 'Try resetting the category and brand filters or adjusting your search term.'
+                    : 'No products are currently listed in MongoDB. Create a storefront in the Vendor Portal and list products to start selling.'}
+                </p>
+                <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
+                  {onNavigateTab && (
+                    <button
+                      onClick={() => onNavigateTab('vendor')}
+                      className="btn btn-secondary"
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                    >
+                      <ShoppingBag size={14} /> Open Vendor Portal
+                    </button>
+                  )}
+                  {(currentProfile?.role === 'admin' || currentProfile?.role === 'vendor') && (
+                    <button
+                      onClick={() => setShowAddModal(true)}
+                      className="btn btn-primary"
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                    >
+                      <Plus size={14} /> Add Product Listing
+                    </button>
+                  )}
+                </div>
               </div>
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(290px, 1fr))', gap: '1.25rem' }}>
@@ -1156,6 +1210,35 @@ export const MarketplaceView: React.FC<MarketplaceViewProps> = ({ currentProfile
                 />
               </div>
 
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>
+                  Storefront / Vendor Owner
+                </label>
+                {storefronts.length > 0 ? (
+                  <select
+                    className="select-custom"
+                    value={selectedVendorId}
+                    onChange={e => {
+                      setSelectedVendorId(e.target.value);
+                      const found = storefronts.find(s => s.id === e.target.value);
+                      if (found) setNewBrand(found.name);
+                    }}
+                    style={{ width: '100%', padding: '0.45rem 0.75rem' }}
+                    required
+                  >
+                    {storefronts.map(s => (
+                      <option key={s.id} value={s.id}>
+                        {s.name} ({s.id}) — {s.tier || 'Verified'}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <div style={{ fontSize: '0.75rem', color: '#dc2626', padding: '8px 12px', background: '#fef2f2', borderRadius: 8, border: '1px solid #fecaca' }}>
+                    No storefronts found in MongoDB. Please create a storefront first in the Vendor Portal before listing products.
+                  </div>
+                )}
+              </div>
+
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
                 <div>
                   <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>
@@ -1183,6 +1266,7 @@ export const MarketplaceView: React.FC<MarketplaceViewProps> = ({ currentProfile
                     type="text"
                     className="input"
                     value={newBrand}
+                    placeholder="e.g. Acme Labs"
                     onChange={e => setNewBrand(e.target.value)}
                     required
                   />

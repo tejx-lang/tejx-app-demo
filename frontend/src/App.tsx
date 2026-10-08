@@ -15,14 +15,12 @@ import { VendorPortalView } from './components/VendorPortalView';
 import { FinancialMatrixView } from './components/FinancialMatrixView';
 import { SecurityCenterView } from './components/SecurityCenterView';
 import { LoginModal } from './components/LoginModal';
-import { UserManagementModal } from './components/UserManagementModal';
 import { UserMenuDropdown } from './components/UserMenuDropdown';
 import {
   getBackendHealth,
   getDatabaseStatus,
   fetchAuthMe,
   loginAs,
-  loginWithCredentials,
   revokeToken,
   clearStoredToken,
   getStoredToken
@@ -61,10 +59,10 @@ export const App: React.FC = () => {
   const [health, setHealth] = useState<BackendHealth | null>(null);
   const [dbStatus, setDbStatus] = useState<DatabaseStatus | null>(null);
   const [currentProfile, setCurrentProfile] = useState<AuthProfile | null>(null);
+  const [sessionError, setSessionError] = useState<string | null>(null);
 
   // Modal States
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
-  const [isUserMgmtModalOpen, setIsUserMgmtModalOpen] = useState(false);
 
   // Auth gate: show login on first load if no token
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -97,6 +95,7 @@ export const App: React.FC = () => {
           checkStatus();
           return;
         }
+        clearStoredToken();
       }
       // No valid token — show login
       setAuthChecked(true);
@@ -120,6 +119,7 @@ export const App: React.FC = () => {
   const handleLoginSuccess = (profile: AuthProfile) => {
     setCurrentProfile(profile);
     setIsAuthenticated(true);
+    setSessionError(null);
     setIsLoginModalOpen(false);
     checkStatus();
   };
@@ -136,79 +136,22 @@ export const App: React.FC = () => {
     setIsLoginModalOpen(true);
   };
 
-  const handleQuickRoleChange = async (role: 'guest' | 'customer' | 'vendor' | 'admin') => {
-    // Optimistic update for instant feedback
-    const roleProfiles: Record<string, AuthProfile> = {
-      guest: {
-        role: 'guest',
-        sub: 'usr-guest',
-        name: 'Anonymous Guest',
-        email: 'guest@marketplace.io',
-        permissions: ['catalog:read'],
-        token: getStoredToken() || '',
-        tokenType: 'Bearer',
-        vendorId: '',
-        keyType: 'EdDSA'
-      },
-      customer: {
-        role: 'customer',
-        sub: 'usr-cust-1',
-        name: 'Elena Vance',
-        email: 'elena@digitalnomad.io',
-        permissions: ['catalog:read', 'cart:write', 'checkout:execute', 'invoices:read'],
-        token: getStoredToken() || '',
-        tokenType: 'Bearer',
-        vendorId: '',
-        keyType: 'EdDSA'
-      },
-      vendor: {
-        role: 'vendor',
-        sub: 'usr-vnd-aurora',
-        name: 'Aurora Labs Admin',
-        email: 'ops@auroralabs.io',
-        vendorId: 'vnd-aurora',
-        permissions: ['catalog:read', 'inventory:manage', 'products:write', 'orders:fulfill', 'promotions:write', 'analytics:read'],
-        token: getStoredToken() || '',
-        tokenType: 'Bearer',
-        keyType: 'EdDSA'
-      },
-      admin: {
-        role: 'admin',
-        sub: 'usr-admin-1',
-        name: 'Platform Super-Admin',
-        email: 'admin@marketplace.io',
-        permissions: ['*'],
-        token: getStoredToken() || '',
-        tokenType: 'Bearer',
-        vendorId: '',
-        keyType: 'EdDSA'
-      }
-    };
-
-    if (roleProfiles[role]) {
-      setCurrentProfile(roleProfiles[role]);
+  const handleQuickRoleChange = async (role: 'guest' | 'customer' | 'vendor' | 'admin', vendorId?: string) => {
+    const res = await loginAs(role, vendorId || '');
+    if (!res.success || !res.data) {
+      setSessionError(res.error || 'Unable to change session. Your current session is unchanged.');
+      return;
     }
 
-    // If switching to a tab that needs different access, jump to marketplace
-    if (!canAccessTab(roleProfiles[role], activeTab)) {
+    setCurrentProfile(res.data);
+    setIsAuthenticated(true);
+    setSessionError(null);
+    if (!canAccessTab(res.data, activeTab)) {
       setActiveTab('marketplace');
-    }
-
-    try {
-      const res = await loginAs(role, role === 'vendor' ? 'vnd-aurora' : '');
-      if (res.success && res.data) {
-        setCurrentProfile(res.data);
-        setIsAuthenticated(true);
-      }
-    } catch (err) {
-      console.warn('Backend loginAs call failed, local optimistic profile retained', err);
     }
   };
 
   const handleTabClick = (tab: 'marketplace' | 'vendor' | 'financial' | 'security') => {
-    if (canAccessTab(currentProfile, tab)) {
-      setActiveTab(tab);
-    }
     // If no access, tab will show a gated message (handled below)
     setActiveTab(tab);
   };
@@ -221,6 +164,7 @@ export const App: React.FC = () => {
         <MarketplaceView
           currentProfile={currentProfile}
           onSwitchRole={handleQuickRoleChange}
+          onNavigateTab={setActiveTab}
         />
       );
     }
@@ -229,8 +173,7 @@ export const App: React.FC = () => {
       if (!canAccessTab(currentProfile, 'vendor')) {
         return renderAccessDenied(
           'Vendor Portal',
-          'You need inventory management or vendor-level access to use this portal.',
-          'vendor'
+          'You need inventory management or vendor-level access to use this portal.'
         );
       }
       return (
@@ -245,8 +188,7 @@ export const App: React.FC = () => {
       if (!canAccessTab(currentProfile, 'financial')) {
         return renderAccessDenied(
           'Financial Analytics',
-          'You need analytics:read permission or admin access to view financial data.',
-          'admin'
+          'You need analytics:read permission or admin access to view financial data.'
         );
       }
       return (
@@ -261,8 +203,7 @@ export const App: React.FC = () => {
       if (!canAccessTab(currentProfile, 'security')) {
         return renderAccessDenied(
           'Security & User Management',
-          'You need users:manage permission or admin access for this section.',
-          'admin'
+          'You need users:manage permission or admin access for this section.'
         );
       }
       return (
@@ -276,7 +217,7 @@ export const App: React.FC = () => {
     return null;
   };
 
-  const renderAccessDenied = (title: string, message: string, requiredRole: string) => (
+  const renderAccessDenied = (title: string, message: string) => (
     <div style={{
       maxWidth: 520,
       margin: '4rem auto',
@@ -301,7 +242,7 @@ export const App: React.FC = () => {
         color: '#0f172a',
         margin: '0 0 0.5rem',
       }}>
-        Access Restricted
+        {title} is restricted
       </h2>
       <p style={{
         fontSize: '0.875rem',
@@ -320,22 +261,6 @@ export const App: React.FC = () => {
           <LogIn size={15} />
           Sign In with Credentials
         </button>
-        {requiredRole === 'vendor' && (
-          <button
-            className="btn btn-secondary"
-            onClick={() => handleQuickRoleChange('vendor')}
-          >
-            Switch to Vendor
-          </button>
-        )}
-        {requiredRole === 'admin' && (
-          <button
-            className="btn btn-secondary"
-            onClick={() => handleQuickRoleChange('admin')}
-          >
-            Switch to Admin
-          </button>
-        )}
       </div>
     </div>
   );
@@ -437,7 +362,7 @@ export const App: React.FC = () => {
                 }}
               >
                 <ShieldCheck size={15} />
-                Security & IAM
+                Users & Security
                 {!canAccessTab(currentProfile, 'security') && (
                   <Lock size={11} style={{ marginLeft: 3, opacity: 0.6 }} />
                 )}
@@ -476,9 +401,10 @@ export const App: React.FC = () => {
             {/* User Menu Dropdown (replaces old select) */}
             <UserMenuDropdown
               currentProfile={currentProfile}
+              isAuthenticated={isAuthenticated}
               onSignIn={() => setIsLoginModalOpen(true)}
               onSignOut={handleSignOut}
-              onOpenUserManagement={() => setIsUserMgmtModalOpen(true)}
+              onOpenUserManagement={() => setActiveTab('security')}
               onQuickSwitch={handleQuickRoleChange}
               hasPermission={hasPermission}
             />
@@ -518,6 +444,23 @@ export const App: React.FC = () => {
             <span className={`badge ${roleMeta.badge}`}>
               {roleMeta.label}
             </span>
+            {currentProfile?.originalRole && currentProfile.originalRole !== currentProfile.role && (
+              <span
+                style={{
+                  background: '#dbeafe',
+                  color: '#1d4ed8',
+                  padding: '2px 8px',
+                  borderRadius: '4px',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 4
+                }}
+              >
+                Switched View (Root Account: {currentProfile.originalRole.toUpperCase()})
+              </span>
+            )}
             <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
               {currentProfile?.role === 'admin' &&
                 'Full platform access — catalog, orders, analytics, user management, and security.'}
@@ -528,6 +471,11 @@ export const App: React.FC = () => {
               {(!currentProfile || currentProfile?.role === 'guest') &&
                 'Guest mode — browse the marketplace. Sign in for full access.'}
             </span>
+            {sessionError && (
+              <span role="alert" style={{ color: '#be123c', fontSize: '0.75rem', fontWeight: 600 }}>
+                {sessionError}
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -580,13 +528,6 @@ export const App: React.FC = () => {
         }}
         onLoginSuccess={handleLoginSuccess}
       />
-
-      {/* User Management Modal */}
-      <UserManagementModal
-        isOpen={isUserMgmtModalOpen}
-        onClose={() => setIsUserMgmtModalOpen(false)}
-        currentProfile={currentProfile}
-      />
     </div>
   );
 };
@@ -596,7 +537,7 @@ function getRoleBadgeStyle(role: string) {
     case 'admin':
       return { badge: 'badge-emerald', label: 'Super-Admin' };
     case 'vendor':
-      return { badge: 'badge-purple', label: 'Vendor (Aurora Labs)' };
+      return { badge: 'badge-purple', label: 'Vendor' };
     case 'customer':
       return { badge: 'badge-blue', label: 'Customer' };
     default:

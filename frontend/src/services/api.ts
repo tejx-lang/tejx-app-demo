@@ -38,6 +38,10 @@ export const backendUrl = (path: string): string => {
 // ==========================================
 
 const TOKEN_KEY = 'tejx_marketplace_auth_token';
+const ORIGINAL_TOKEN_KEY = 'tejx_marketplace_original_token';
+const AUTH_ROLES = ['guest', 'customer', 'vendor', 'admin'] as const;
+type AuthRole = typeof AUTH_ROLES[number];
+type AuthResponse = Record<string, unknown>;
 
 export function getStoredToken(): string | null {
   try {
@@ -48,8 +52,10 @@ export function getStoredToken(): string | null {
 }
 
 export function setStoredToken(token: string): void {
+  const normalizedToken = token.trim();
+  if (!normalizedToken) return;
   try {
-    localStorage.setItem(TOKEN_KEY, token);
+    localStorage.setItem(TOKEN_KEY, normalizedToken);
   } catch (err) {
     console.error('Failed to save token to localStorage', err);
   }
@@ -63,6 +69,26 @@ export function clearStoredToken(): void {
   }
 }
 
+export function getOriginalToken(): string | null {
+  try {
+    return localStorage.getItem(ORIGINAL_TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function saveOriginalToken(token: string): void {
+  try {
+    localStorage.setItem(ORIGINAL_TOKEN_KEY, token);
+  } catch { /* ignore */ }
+}
+
+export function clearOriginalToken(): void {
+  try {
+    localStorage.removeItem(ORIGINAL_TOKEN_KEY);
+  } catch { /* ignore */ }
+}
+
 function getAuthHeaders(): Record<string, string> {
   const token = getStoredToken();
   const headers: Record<string, string> = {
@@ -74,23 +100,72 @@ function getAuthHeaders(): Record<string, string> {
   return headers;
 }
 
+function isAuthRole(value: unknown): value is AuthRole {
+  return typeof value === 'string' && AUTH_ROLES.includes(value as AuthRole);
+}
+
+async function readAuthResponse(res: Response): Promise<AuthResponse> {
+  const body = await res.text();
+  if (!body) return {};
+  try {
+    return JSON.parse(body) as AuthResponse;
+  } catch {
+    return { error: `Authentication service returned an invalid response (${res.status})` };
+  }
+}
+
+function responseError(payload: AuthResponse, fallback: string): string {
+  return typeof payload.error === 'string' && payload.error ? payload.error : fallback;
+}
+
+function buildAuthProfile(payload: AuthResponse, token: string): AuthProfile | null {
+  const role = payload.role;
+  const permissions = payload.permissions;
+  if (!token || !isAuthRole(role) || !Array.isArray(permissions)) return null;
+
+  return {
+    token,
+    tokenType: typeof payload.tokenType === 'string' ? payload.tokenType : 'Bearer',
+    sub: typeof payload.sub === 'string' ? payload.sub : '',
+    name: typeof payload.name === 'string' ? payload.name : role,
+    email: typeof payload.email === 'string' ? payload.email : '',
+    role,
+    originalRole: (typeof payload.originalRole === 'string' && isAuthRole(payload.originalRole)) ? (payload.originalRole as AuthRole) : role,
+    originalSub: typeof payload.originalSub === 'string' ? payload.originalSub : '',
+    originalName: typeof payload.originalName === 'string' ? payload.originalName : '',
+    vendorId: typeof payload.vendorId === 'string' ? payload.vendorId : '',
+    permissions: permissions.filter((permission): permission is string => typeof permission === 'string'),
+    keyType: typeof payload.keyType === 'string' ? payload.keyType : 'EdDSA'
+  };
+}
+
 // ==========================================
 // 1. Identity, Security & Access Control (IAM)
 // ==========================================
 
-export async function loginAs(role: 'guest' | 'customer' | 'vendor' | 'admin', vendorId?: string): Promise<{ success: boolean; data?: AuthProfile; error?: string }> {
+export async function loginAs(role: AuthRole, vendorId?: string): Promise<{ success: boolean; data?: AuthProfile; error?: string }> {
   try {
+    const currentToken = getStoredToken();
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json'
+    };
+    if (currentToken) {
+      headers['Authorization'] = `Bearer ${currentToken}`;
+    }
     const res = await fetch(backendUrl('/api/auth/login'), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ role, vendorId: vendorId || 'vnd-aurora' })
+      headers,
+      body: JSON.stringify({ role, vendorId: vendorId || '' })
     });
-    const json = await res.json();
-    if (!res.ok || !json.data?.token) {
-      return { success: false, error: json.error || 'Authentication failed' };
+    const json = await readAuthResponse(res);
+    const token = typeof json.token === 'string' ? json.token : '';
+    if (!res.ok || !token) {
+      return { success: false, error: responseError(json, 'Authentication failed') };
     }
-    setStoredToken(json.data.token);
-    return { success: true, data: json.data };
+    const profile = buildAuthProfile(json, token);
+    if (!profile) return { success: false, error: 'Authentication service returned an invalid session' };
+    setStoredToken(token);
+    return { success: true, data: profile };
   } catch (err: any) {
     return { success: false, error: err.message || 'Login network error' };
   }
@@ -100,15 +175,18 @@ export async function loginWithCredentials(username: string, password: string): 
   try {
     const res = await fetch(backendUrl('/api/auth/login'), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify({ username, password })
     });
-    const json = await res.json();
-    if (!res.ok || !json.data?.token) {
-      return { success: false, error: json.error || 'Invalid credentials' };
+    const json = await readAuthResponse(res);
+    const token = typeof json.token === 'string' ? json.token : '';
+    if (!res.ok || !token) {
+      return { success: false, error: responseError(json, 'Invalid credentials') };
     }
-    setStoredToken(json.data.token);
-    return { success: true, data: json.data };
+    const profile = buildAuthProfile(json, token);
+    if (!profile) return { success: false, error: 'Authentication service returned an invalid session' };
+    setStoredToken(token);
+    return { success: true, data: profile };
   } catch (err: any) {
     return { success: false, error: err.message || 'Login network error' };
   }
@@ -207,15 +285,16 @@ export async function deleteUserAccount(userId: string): Promise<{ success: bool
 }
 
 export async function fetchAuthMe(): Promise<{ success: boolean; data?: AuthProfile; error?: string }> {
+  const token = getStoredToken();
+  if (!token) return { success: false, error: 'No stored session token' };
   try {
     const res = await fetch(backendUrl('/api/auth/me'), {
       headers: getAuthHeaders()
     });
-    const json = await res.json();
-    if (!res.ok) {
-      return { success: false, error: json.error || 'Authentication check failed' };
-    }
-    return { success: true, data: json.data };
+    const json = await readAuthResponse(res);
+    const profile = res.ok ? buildAuthProfile(json, token) : null;
+    if (!profile) return { success: false, error: responseError(json, 'Authentication check failed') };
+    return { success: true, data: profile };
   } catch (err: any) {
     return { success: false, error: err.message };
   }
@@ -228,15 +307,41 @@ export async function revokeToken(): Promise<{ success: boolean; message?: strin
       headers: getAuthHeaders()
     });
     clearStoredToken();
-    const json = await res.json();
-    return { success: res.ok, message: json.data?.message || 'Token revoked', error: json.error };
+    const json = await readAuthResponse(res);
+    return { success: res.ok, message: typeof json.message === 'string' ? json.message : 'Token revoked', error: responseError(json, 'Unable to revoke token') };
   } catch (err: any) {
     clearStoredToken();
     return { success: false, error: err.message };
   }
 }
 
-export async function fetchStaffAccounts(vendorId: string = 'vnd-aurora'): Promise<StaffAccount[]> {
+export async function restoreOriginalSession(): Promise<{ success: boolean; data?: AuthProfile; error?: string }> {
+  const originalToken = getOriginalToken();
+  if (!originalToken) return { success: false, error: 'No original session saved' };
+  // Validate the original token still works
+  const savedCurrent = getStoredToken();
+  try {
+    setStoredToken(originalToken);
+    const res = await fetch(backendUrl('/api/auth/me'), {
+      headers: getAuthHeaders()
+    });
+    const json = await readAuthResponse(res);
+    const profile = res.ok ? buildAuthProfile(json, originalToken) : null;
+    if (profile) {
+      clearOriginalToken();
+      return { success: true, data: profile };
+    }
+    // Original token is stale — restore what we had
+    if (savedCurrent) setStoredToken(savedCurrent);
+    clearOriginalToken();
+    return { success: false, error: 'Original session has expired. Please sign in again.' };
+  } catch (err: any) {
+    if (savedCurrent) setStoredToken(savedCurrent);
+    return { success: false, error: err.message };
+  }
+}
+
+export async function fetchStaffAccounts(vendorId: string = ''): Promise<StaffAccount[]> {
   try {
     const res = await fetch(backendUrl(`/api/vendor/staff?vendorId=${vendorId}`), {
       headers: getAuthHeaders()
@@ -248,6 +353,7 @@ export async function fetchStaffAccounts(vendorId: string = 'vnd-aurora'): Promi
     return [];
   }
 }
+
 
 export async function createStaffAccount(account: {
   vendorId: string;
@@ -470,13 +576,46 @@ export async function createStorefront(storefront: {
   }
 }
 
-export async function fetchVendorInventory(vendorId: string = 'vnd-aurora'): Promise<{
+export async function updateStorefront(
+  vendorId: string,
+  storefront: { name?: string; tier?: string; status?: string }
+): Promise<{ success: boolean; data?: VendorStorefront; error?: string }> {
+  try {
+    const res = await fetch(backendUrl(`/api/vendor/storefronts/${vendorId}`), {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(storefront)
+    });
+    const json = await res.json();
+    if (!res.ok) return { success: false, error: json.error || 'Failed to update storefront' };
+    return { success: true, data: json.data };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
+export async function deleteStorefront(vendorId: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const res = await fetch(backendUrl(`/api/vendor/storefronts/${vendorId}`), {
+      method: 'DELETE',
+      headers: getAuthHeaders()
+    });
+    const json = await res.json();
+    if (!res.ok) return { success: false, error: json.error || 'Failed to delete storefront' };
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
+export async function fetchVendorInventory(vendorId?: string): Promise<{
   inventory: any[];
   totalVariants: number;
   lowStockAlertCount: number;
 }> {
   try {
-    const res = await fetch(backendUrl(`/api/vendor/inventory?vendorId=${vendorId}`), {
+    const query = vendorId ? `?vendorId=${vendorId}` : '';
+    const res = await fetch(backendUrl(`/api/vendor/inventory${query}`), {
       headers: getAuthHeaders()
     });
     if (!res.ok) throw new Error('Inventory fetch failed');
@@ -515,9 +654,10 @@ export async function fetchVendorPromotions(): Promise<any[]> {
   }
 }
 
-export async function fetchVendorMetrics(vendorId: string = 'vnd-aurora'): Promise<any> {
+export async function fetchVendorMetrics(vendorId?: string): Promise<any> {
   try {
-    const res = await fetch(backendUrl(`/api/vendor/metrics?vendorId=${vendorId}`), {
+    const query = vendorId ? `?vendorId=${vendorId}` : '';
+    const res = await fetch(backendUrl(`/api/vendor/metrics${query}`), {
       headers: getAuthHeaders()
     });
     if (!res.ok) return null;
@@ -552,7 +692,8 @@ export async function fetchCommissionLedger(): Promise<CommissionLedgerEntry[]> 
     });
     if (!res.ok) return [];
     const json = await res.json();
-    return json.data?.ledger || [];
+    // Backend returns { ledgerEntries: [...] } in data
+    return json.data?.ledgerEntries || json.data?.ledger || [];
   } catch {
     return [];
   }

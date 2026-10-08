@@ -114,6 +114,9 @@ export interface AuthProfile {
   name: string;
   email: string;
   role: 'guest' | 'customer' | 'vendor' | 'admin';
+  originalRole?: 'guest' | 'customer' | 'vendor' | 'admin';
+  originalSub?: string;
+  originalName?: string;
   vendorId: string;
   permissions: string[];
   keyType: string;

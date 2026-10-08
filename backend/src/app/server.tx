@@ -36,7 +36,8 @@ export function runApplication(): void {
     } catch (err) {
         setMongoDatabase(None);
         configureDatabaseConnection(conn, false);
-        print(colorLabel("storage", "33"), "MongoDB unreachable (" + String(err) + "). Activated in-memory fallback.");
+        print(colorLabel("storage", "31"), "MongoDB is required and could not be reached: " + String(err));
+        exit(1);
     }
 
     let state: AppState = loadAppStateFromMongoOrSeed(client);

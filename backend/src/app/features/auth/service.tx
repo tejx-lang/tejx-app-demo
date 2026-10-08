@@ -8,6 +8,7 @@ import { MongoDatabase } from "../../../../../mongo-sdk/src/index.tx";
 import { MongoJsonObject } from "../../../../../mongo-sdk/src/json.tx";
 import { parseJson, JsonObject, objectOf, plainJson } from "../../helpers/json.tx";
 import { StaffAccount, TokenClaims, UserAccount } from "./model.tx";
+import { resolveAdminPassword, resolveAdminUsername } from "../../config/env.tx";
 
 class AuthService {
     blacklistedTokens: Map<string, int64>; // token -> revokedAt
@@ -22,16 +23,19 @@ class AuthService {
         this.staffIds = [];
         this.userAccounts = new Map<string, UserAccount>();
         this.userIds = [];
-        this.seedInitialStaff();
+        this.loadUsersFromMongo();
         this.seedInitialUsers();
     }
 
     private seedInitialUsers(): void {
+        let adminUsername: string = resolveAdminUsername();
+        if (this.userAccounts.has(adminUsername)) return;
         let t: int64 = now();
+        let adminPassword: string = resolveAdminPassword();
         let uAdmin = new UserAccount(
             "usr-admin-1",
-            "admin",
-            "admin", // default requested: username admin, password admin
+            adminUsername,
+            adminPassword,
             "Platform Super-Admin",
             "admin@marketplace.io",
             "admin",
@@ -39,63 +43,73 @@ class AuthService {
             ["*"],
             t
         );
-        let uVendor = new UserAccount(
-            "usr-vnd-aurora",
-            "vendor",
-            "vendor",
-            "Aurora Labs Admin",
-            "ops@auroralabs.io",
-            "vendor",
-            "vnd-aurora",
-            ["inventory:manage", "promotions:write", "analytics:read", "products:write", "orders:fulfill", "staff:manage"],
-            t
-        );
-        let uCustomer = new UserAccount(
-            "usr-cust-1",
-            "customer",
-            "customer",
-            "Elena Vance",
-            "elena@digitalnomad.io",
-            "customer",
-            "",
-            ["catalog:read", "cart:write", "checkout:execute", "invoices:read"],
-            t
-        );
         this.userAccounts.set(uAdmin.username, uAdmin);
-        this.userAccounts.set(uVendor.username, uVendor);
-        this.userAccounts.set(uCustomer.username, uCustomer);
         this.userIds.push(uAdmin.username);
-        this.userIds.push(uVendor.username);
-        this.userIds.push(uCustomer.username);
+        this.persistUser(uAdmin);
     }
 
-    private seedInitialStaff(): void {
-        let t: int64 = now();
-        let s1 = new StaffAccount(
-            "stf-1",
-            "vnd-aurora",
-            "Marcus Vance",
-            "marcus@auroralabs.io",
-            ["inventory:read", "inventory:write", "orders:read"],
-            t
-        );
-        let s2 = new StaffAccount(
-            "stf-2",
-            "vnd-aurora",
-            "Sarah Jenkins",
-            "sarah.fin@auroralabs.io",
-            ["orders:read", "finance:read"],
-            t
-        );
-        this.staffAccounts.set(s1.id, s1);
-        this.staffAccounts.set(s2.id, s2);
-        this.staffIds.push(s1.id);
-        this.staffIds.push(s2.id);
+    private loadUsersFromMongo(): void {
+        let maybeDb = getMongoDatabase();
+        if (!isMongoActive() || maybeDb == None) return;
+        try {
+            let db: MongoDatabase = maybeDb as MongoDatabase;
+            let docs = db.find("user_accounts", new MongoJsonObject({}));
+            for (let i = 0; i < docs.length(); i++) {
+                let d = docs[i];
+                let username = d.string("username");
+                if (username == "") continue;
+                let user = new UserAccount(d.string("id"), username, d.string("passwordHash"), d.string("name"), d.string("email"), d.string("role"), d.string("vendorId"), d.stringArray("permissions"), d.int64("createdAt"));
+                this.userAccounts.set(username, user);
+                this.userIds.push(username);
+            }
+        } catch (e) {
+            print("[mongo-err] Failed to load user accounts: " + String(e));
+        }
     }
 
-    generateToken(sub: string, name: string, email: string, role: string, vendorId: string, permissions: string[]): string {
+    private persistUser(user: UserAccount): void {
+        let maybeDb = getMongoDatabase();
+        if (!isMongoActive() || maybeDb == None) return;
+        try {
+            let db: MongoDatabase = maybeDb as MongoDatabase;
+            let doc: any = user.toJSON();
+            doc["passwordHash"] = user.passwordHash;
+            db.upsertOne("user_accounts", new MongoJsonObject({ id: user.id }), new MongoJsonObject(doc));
+        } catch (e) {
+            print("[mongo-err] Failed to persist user account: " + String(e));
+        }
+    }
+
+    private deletePersistedUser(userId: string): void {
+        let maybeDb = getMongoDatabase();
+        if (!isMongoActive() || maybeDb == None) return;
+        try {
+            let db: MongoDatabase = maybeDb as MongoDatabase;
+            db.deleteOne("user_accounts", new MongoJsonObject({ id: userId }));
+        } catch (e) {
+            print("[mongo-err] Failed to delete user account: " + String(e));
+        }
+    }
+
+    generateToken(
+        sub: string,
+        name: string,
+        email: string,
+        role: string,
+        vendorId: string,
+        permissions: string[],
+        originalRole: string = "",
+        originalSub: string = "",
+        originalName: string = "",
+        originalVendorId: string = ""
+    ): string {
         let t: int64 = now();
         let exp: int64 = t + 86400000; // 24 hours
+
+        let rootRole: string = originalRole != "" ? originalRole : role;
+        let rootSub: string = originalSub != "" ? originalSub : sub;
+        let rootName: string = originalName != "" ? originalName : name;
+        let rootVendorId: string = originalVendorId != "" ? originalVendorId : vendorId;
 
         // Header: Asymmetric EdDSA Public/Private key pair spec
         let headerStr: string = "{\"alg\":\"EdDSA\",\"typ\":\"JWT\",\"kid\":\"key-eddsa-2026-01\"}";
@@ -111,6 +125,10 @@ class AuthService {
         payloadObj.setStringArray("permissions", permissions);
         payloadObj.setInt64("iat", t);
         payloadObj.setInt64("exp", exp);
+        payloadObj.setString("originalRole", rootRole);
+        payloadObj.setString("originalSub", rootSub);
+        payloadObj.setString("originalName", rootName);
+        payloadObj.setString("originalVendorId", rootVendorId);
 
         let payloadStr: string = plainJson(payloadObj);
         let payloadBytes: int[] = binary.fromString(payloadStr);
@@ -147,7 +165,9 @@ class AuthService {
             }
         }
 
-        // 3. Parse JWT parts: header.payload.signature
+        // 3. Validate the three JWT parts and the simulated signature before
+        // parsing the claims. This demo has no crypto primitive for a real
+        // EdDSA verification, but must still reject altered tokens.
         let dot1: int = token.indexOf(".");
         if (dot1 <= 0) return None;
         let rest: string = token.substring(dot1 + 1, token.length());
@@ -155,6 +175,12 @@ class AuthService {
         if (dot2 <= 0) return None;
 
         let payloadB64: string = rest.substring(0, dot2);
+        let signatureB64: string = rest.substring(dot2 + 1, rest.length());
+        if (payloadB64 == "" || signatureB64 == "") return None;
+        let signInput: string = token.substring(0, dot1) + "." + payloadB64;
+        let expectedSignature: string = base64Encode(binary.fromString(signInput + ":asym-privkey-eddsa-secure"));
+        if (signatureB64 != expectedSignature) return None;
+
         try {
             let decodedBytes: int[] = base64Decode(payloadB64);
             let payloadJsonStr: string = binary.toString(decodedBytes);
@@ -180,7 +206,12 @@ class AuthService {
             }
             let iatVal: int64 = Number.Int64(String(parsed["iat"]));
 
-            return new TokenClaims(sub, name, email, role, vendorId, permissions, iatVal, expVal);
+            let origRole: string = String(parsed["originalRole"] != None ? parsed["originalRole"] : role);
+            let origSub: string = String(parsed["originalSub"] != None ? parsed["originalSub"] : sub);
+            let origName: string = String(parsed["originalName"] != None ? parsed["originalName"] : name);
+            let origVendorId: string = String(parsed["originalVendorId"] != None ? parsed["originalVendorId"] : vendorId);
+
+            return new TokenClaims(sub, name, email, role, vendorId, permissions, iatVal, expVal, origRole, origSub, origName, origVendorId);
         } catch (e) {
             return None;
         }
@@ -270,13 +301,7 @@ class AuthService {
         this.userAccounts.set(username, acc);
         this.userIds.push(username);
 
-        let maybeDb = getMongoDatabase();
-        if (isMongoActive() && maybeDb != None) {
-            try {
-                let db: MongoDatabase = maybeDb as MongoDatabase;
-                db.insertOne("user_accounts", new MongoJsonObject(acc.toJSON()));
-            } catch (e) {}
-        }
+        this.persistUser(acc);
         return acc;
     }
 
@@ -291,6 +316,7 @@ class AuthService {
                     acc.role = role;
                     acc.vendorId = vendorId;
                     acc.permissions = permissions;
+                    this.persistUser(acc);
                     return true;
                 }
             }
@@ -305,6 +331,7 @@ class AuthService {
                 let acc = u as UserAccount;
                 if (acc.id == userId || acc.username == userId) {
                     acc.passwordHash = newPasswordHash;
+                    this.persistUser(acc);
                     return true;
                 }
             }
@@ -313,16 +340,18 @@ class AuthService {
     }
 
     deleteUser(userId: string): bool {
-        if (userId == "admin" || userId == "usr-admin-1") {
+        if (userId == resolveAdminUsername() || userId == "usr-admin-1") {
             return false;
         }
         let targetKey: string = "";
+        let targetId: string = "";
         for (let i = 0; i < this.userIds.length(); i++) {
             let u = this.userAccounts.get(this.userIds[i]);
             if (u != None) {
                 let acc = u as UserAccount;
                 if (acc.id == userId || acc.username == userId) {
                     targetKey = acc.username;
+                    targetId = acc.id;
                     break;
                 }
             }
@@ -336,6 +365,7 @@ class AuthService {
             }
         }
         this.userIds = newIds;
+        this.deletePersistedUser(targetId);
         return true;
     }
 }

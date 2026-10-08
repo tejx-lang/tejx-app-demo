@@ -5,11 +5,12 @@ import { jsonSuccess, jsonError } from "../../core/responses.tx";
 import { JsonObject, objectOf, parseJson } from "../../helpers/json.tx";
 import { getMarketplaceStore } from "../marketplace/store.tx";
 import { SnapshotInvoice, MarketplaceProduct } from "../marketplace/model.tx";
+import { Map } from "std:collections";
 
 // 1. Platform Financial Health Matrix (Multi-dimensional Sales Aggregation & Materialized View Cache)
 export function handleGetPlatformFinancialMatrix(ctx: AppRouteContext): AppHttpResponse {
     let store = getMarketplaceStore();
-    let period: string = ctx.query("period", "daily").toLowerCase(); // "hourly" | "daily" | "monthly"
+    let period: string = ctx.query("period", "daily").toLowerCase();
 
     let totalGmv: float = 0.0;
     let totalTax: float = 0.0;
@@ -22,6 +23,10 @@ export function handleGetPlatformFinancialMatrix(ctx: AppRouteContext): AppHttpR
     let invoiceCount: int = invoiceKeys.length();
 
     let recentInvoices: any[] = [];
+
+    // Track per-vendor GMV for payout schedules
+    let vendorPayoutMap: Map<string, float> = new Map<string, float>();
+    let vendorNameMap: Map<string, string> = new Map<string, string>();
 
     for (let i = 0; i < invoiceKeys.length(); i++) {
         let invOpt = store.invoices.get(invoiceKeys[i]);
@@ -36,12 +41,46 @@ export function handleGetPlatformFinancialMatrix(ctx: AppRouteContext): AppHttpR
 
         for (let j = 0; j < inv.items.length(); j++) {
             totalUnitsSold = totalUnitsSold + inv.items[j].quantity;
+
+            let vendId: string = inv.items[j].vendorId;
+            let vendName: string = inv.items[j].vendorName;
+            let existingPayout = vendorPayoutMap.get(vendId);
+            if (existingPayout == None) {
+                vendorPayoutMap.set(vendId, inv.items[j].vendorPayout);
+                vendorNameMap.set(vendId, vendName);
+            } else {
+                vendorPayoutMap.set(vendId, (existingPayout as float) + inv.items[j].vendorPayout);
+            }
         }
 
         if (recentInvoices.length() < 10) {
             recentInvoices.push(inv.toJSON());
         }
     }
+
+    // Build payout schedules from real vendor data
+    let payoutSchedule: any[] = [];
+    let vendorPayoutIds: string[] = vendorPayoutMap.keys();
+    for (let i = 0; i < vendorPayoutIds.length(); i++) {
+        let vid: string = vendorPayoutIds[i];
+        let payoutOpt = vendorPayoutMap.get(vid);
+        let vnameOpt = vendorNameMap.get(vid);
+        let payoutAmt: float = 0.0;
+        let vname: string = vid;
+        if (payoutOpt != None) payoutAmt = payoutOpt as float;
+        if (vnameOpt != None) vname = vnameOpt as string;
+        let batchId: string = "PAY-" + String(now()) + "-" + vid;
+        payoutSchedule.push({
+            "batchId": batchId,
+            "vendor": vname,
+            "amount": payoutAmt,
+            "status": "Scheduled",
+            "escrowPeriodDays": 7
+        });
+    }
+
+    let aov: float = 0.0;
+    if (invoiceCount > 0) aov = totalGmv / (invoiceCount as float);
 
     let out: JsonObject = objectOf({});
     out.setString("trackingPeriod", period);
@@ -52,16 +91,9 @@ export function handleGetPlatformFinancialMatrix(ctx: AppRouteContext): AppHttpR
     out.setFloat("netVendorPayoutReserve", totalVendorPayouts);
     out.setInt("settledTransactionsCount", invoiceCount);
     out.setInt("totalUnitsSold", totalUnitsSold);
-    out.setFloat("averageOrderValue", invoiceCount > 0 ? (totalGmv / (invoiceCount as float)) : 0.0);
+    out.setFloat("averageOrderValue", aov);
     out.setBool("materializedViewCacheHit", true);
     out.setInt64("lastMaterializedTimestamp", now());
-
-    // Payout Schedules with Escrow Durations
-    let payoutSchedule: any[] = [
-        { "batchId": "PAY-2026-W40", "vendor": "Aurora Labs", "amount": 14280.50, "status": "Scheduled (Oct 08)", "escrowPeriodDays": 7 },
-        { "batchId": "PAY-2026-W39", "vendor": "Zenith Systems", "amount": 8940.20, "status": "Cleared / Dispatched", "escrowPeriodDays": 0 },
-        { "batchId": "PAY-2026-W40", "vendor": "HyperGear Global", "amount": 19450.00, "status": "In Escrow (Validation)", "escrowPeriodDays": 3 }
-    ];
     out.setArray("payoutSchedules", payoutSchedule);
     out.setArray("recentInvoices", recentInvoices);
     out.setString("compliance", "IRS & SOC2 Audit-Compliant Invoicing Snapshots");
@@ -81,8 +113,9 @@ export function handleGetCommissionLedger(ctx: AppRouteContext): AppHttpResponse
 
         for (let j = 0; j < inv.items.length(); j++) {
             let item = inv.items[j];
+            let entryRef: string = "LEDGER-" + inv.orderId + "-" + String(j + 1);
             ledgerEntries.push({
-                "entryRef": "LEDGER-" + inv.orderId + "-" + String(j + 1),
+                "entryRef": entryRef,
                 "orderId": inv.orderId,
                 "correlationId": inv.correlationId,
                 "vendorId": item.vendorId,
@@ -94,7 +127,7 @@ export function handleGetCommissionLedger(ctx: AppRouteContext): AppHttpResponse
                 "commissionRate": inv.platformCommissionRate,
                 "taxAmount": item.taxAmount,
                 "netVendorCredit": item.vendorPayout,
-                "settlementStatus": "ESCROW_LOCKED",
+                "settlementStatus": inv.status,
                 "createdAt": inv.createdAt
             });
         }
@@ -110,31 +143,171 @@ export function handleGetCommissionLedger(ctx: AppRouteContext): AppHttpResponse
 // 3. Top-K Analytical Grouping (Rankings by Revenue and Sales Volume)
 export function handleGetTopKAnalytics(ctx: AppRouteContext): AppHttpResponse {
     let store = getMarketplaceStore();
+    let k: int = 5;
+    let kParam: string = ctx.query("k", "5");
+    if (kParam != "") {
+        k = Number.Int(kParam);
+        if (k <= 0) k = 5;
+    }
 
-    let topProducts: any[] = [
-        { "rank": 1, "productId": "mp-starlink-roam", "title": "Starlink Mini Global Roam Satellite Terminal", "category": "Connectivity", "unitsSold": 142, "revenue": 72299.30 },
-        { "rank": 2, "productId": "mp-anc-ultra", "title": "Nomad ANC Titanium Noise-Cancelling Headphones", "category": "Audio", "unitsSold": 88, "revenue": 17529.60 },
-        { "rank": 3, "productId": "mp-gan-200w", "title": "HyperCharge 200W Quad-Port GaN Travel Fast Charger", "category": "Power", "unitsSold": 115, "revenue": 8699.75 },
-        { "rank": 4, "productId": "mp-carbon-stand", "title": "AeroCarbon Featherweight Foldable Laptop Stand", "category": "Workstation", "unitsSold": 54, "revenue": 3510.00 }
-    ];
+    // Aggregate revenue and units sold per product from real orders
+    let productRevenueMap: Map<string, float> = new Map<string, float>();
+    let productUnitMap: Map<string, int> = new Map<string, int>();
+    let productTitleMap: Map<string, string> = new Map<string, string>();
+    let productCategoryMap: Map<string, string> = new Map<string, string>();
 
-    let topCategories: any[] = [
-        { "rank": 1, "category": "Connectivity", "gmv": 72299.30, "marketSharePercent": 70.8 },
-        { "rank": 2, "category": "Audio", "gmv": 17529.60, "marketSharePercent": 17.2 },
-        { "rank": 3, "category": "Power", "gmv": 8699.75, "marketSharePercent": 8.5 },
-        { "rank": 4, "category": "Workstation", "gmv": 3510.00, "marketSharePercent": 3.5 }
-    ];
+    let invoiceKeys = store.invoices.keys();
+    for (let i = 0; i < invoiceKeys.length(); i++) {
+        let invOpt = store.invoices.get(invoiceKeys[i]);
+        if (invOpt == None) continue;
+        let inv = invOpt as SnapshotInvoice;
+        for (let j = 0; j < inv.items.length(); j++) {
+            let item = inv.items[j];
+            let pid: string = item.productId;
+
+            let existingRev = productRevenueMap.get(pid);
+            if (existingRev == None) {
+                productRevenueMap.set(pid, item.subtotal);
+            } else {
+                productRevenueMap.set(pid, (existingRev as float) + item.subtotal);
+            }
+
+            let existingUnits = productUnitMap.get(pid);
+            if (existingUnits == None) {
+                productUnitMap.set(pid, item.quantity);
+            } else {
+                productUnitMap.set(pid, (existingUnits as int) + item.quantity);
+            }
+
+            if (productTitleMap.get(pid) == None) {
+                productTitleMap.set(pid, item.title);
+            }
+
+            let pOpt = store.products.get(pid);
+            if (pOpt != None && productCategoryMap.get(pid) == None) {
+                productCategoryMap.set(pid, (pOpt as MarketplaceProduct).category);
+            }
+        }
+    }
+
+    // Sort product IDs by revenue descending (bubble sort)
+    let topProductIds: string[] = productRevenueMap.keys();
+    for (let i = 0; i < topProductIds.length(); i++) {
+        for (let j = i + 1; j < topProductIds.length(); j++) {
+            let revI = productRevenueMap.get(topProductIds[i]);
+            let revJ = productRevenueMap.get(topProductIds[j]);
+            let ri: float = 0.0;
+            let rj: float = 0.0;
+            if (revI != None) ri = revI as float;
+            if (revJ != None) rj = revJ as float;
+            if (rj > ri) {
+                let tmp: string = topProductIds[i];
+                topProductIds[i] = topProductIds[j];
+                topProductIds[j] = tmp;
+            }
+        }
+    }
+
+    let topProducts: any[] = [];
+    let limit: int = topProductIds.length();
+    if (k < limit) limit = k;
+    for (let i = 0; i < limit; i++) {
+        let pid: string = topProductIds[i];
+        let rev = productRevenueMap.get(pid);
+        let units = productUnitMap.get(pid);
+        let titleOpt = productTitleMap.get(pid);
+        let catOpt = productCategoryMap.get(pid);
+
+        let revAmt: float = 0.0;
+        let unitsAmt: int = 0;
+        let titleStr: string = pid;
+        let catStr: string = "Unknown";
+        if (rev != None) revAmt = rev as float;
+        if (units != None) unitsAmt = units as int;
+        if (titleOpt != None) titleStr = titleOpt as string;
+        if (catOpt != None) catStr = catOpt as string;
+
+        let rankNum: int = i + 1;
+        topProducts.push({
+            "rank": rankNum,
+            "productId": pid,
+            "title": titleStr,
+            "category": catStr,
+            "unitsSold": unitsAmt,
+            "revenue": revAmt
+        });
+    }
+
+    // Aggregate by category
+    let catRevenueMap: Map<string, float> = new Map<string, float>();
+    let catPidKeys: string[] = productRevenueMap.keys();
+    for (let i = 0; i < catPidKeys.length(); i++) {
+        let pid: string = catPidKeys[i];
+        let catOpt = productCategoryMap.get(pid);
+        let rev = productRevenueMap.get(pid);
+        if (catOpt == None || rev == None) continue;
+        let cat: string = catOpt as string;
+        let existingCatRev = catRevenueMap.get(cat);
+        if (existingCatRev == None) {
+            catRevenueMap.set(cat, rev as float);
+        } else {
+            catRevenueMap.set(cat, (existingCatRev as float) + (rev as float));
+        }
+    }
+
+    let allCatKeys: string[] = catRevenueMap.keys();
+    let totalCatGmv: float = 0.0;
+    for (let i = 0; i < allCatKeys.length(); i++) {
+        let r = catRevenueMap.get(allCatKeys[i]);
+        if (r != None) totalCatGmv = totalCatGmv + (r as float);
+    }
+
+    // Sort categories by GMV descending
+    for (let i = 0; i < allCatKeys.length(); i++) {
+        for (let j = i + 1; j < allCatKeys.length(); j++) {
+            let ri = catRevenueMap.get(allCatKeys[i]);
+            let rj = catRevenueMap.get(allCatKeys[j]);
+            let rif: float = 0.0;
+            let rjf: float = 0.0;
+            if (ri != None) rif = ri as float;
+            if (rj != None) rjf = rj as float;
+            if (rjf > rif) {
+                let tmp: string = allCatKeys[i];
+                allCatKeys[i] = allCatKeys[j];
+                allCatKeys[j] = tmp;
+            }
+        }
+    }
+
+    let topCategories: any[] = [];
+    let catLimit: int = allCatKeys.length();
+    if (k < catLimit) catLimit = k;
+    for (let i = 0; i < catLimit; i++) {
+        let cat: string = allCatKeys[i];
+        let r = catRevenueMap.get(cat);
+        let gmv: float = 0.0;
+        if (r != None) gmv = r as float;
+        let share: float = 0.0;
+        if (totalCatGmv > 0.0) share = (gmv / totalCatGmv) * 100.0;
+        let catRank: int = i + 1;
+        topCategories.push({
+            "rank": catRank,
+            "category": cat,
+            "gmv": gmv,
+            "marketSharePercent": share
+        });
+    }
 
     let out: JsonObject = objectOf({});
     out.setArray("topProducts", topProducts);
     out.setArray("topCategories", topCategories);
-    out.setInt("k", 4);
-    out.setString("aggregationEngine", "MongoDB Pipeline (Simulated In-Memory & Direct Wire)");
+    out.setInt("k", k);
+    out.setString("aggregationEngine", "Real-Time Order Aggregation Pipeline");
     return jsonSuccess("Top-K analytical groupings ranked by volume and revenue", out);
 }
 
 // 4. Automated Data Lifecycle Tiering (Hot vs Cold Archive)
-let coldArchiveSimulatedCount: int = 1420;
+let coldArchiveSimulatedCount: int = 0;
 
 export function handleGetDataTiering(ctx: AppRouteContext): AppHttpResponse {
     let store = getMarketplaceStore();
@@ -195,7 +368,23 @@ export function handleGetRateLimits(ctx: AppRouteContext): AppHttpResponse {
 // 7. Stress Test Simulation for Zero-Overdraft Protection under Extreme Concurrency
 export function handleSimulateFlashSaleConcurrency(ctx: AppRouteContext): AppHttpResponse {
     let store = getMarketplaceStore();
-    let sku: string = ctx.query("sku", "SKU-SLM-200W");
+    let sku: string = ctx.query("sku", "");
+    if (sku == "") {
+        // Find first available SKU
+        for (let i = 0; i < store.productIds.length(); i++) {
+            let p = store.products.get(store.productIds[i]);
+            if (p == None) continue;
+            let prod = p as MarketplaceProduct;
+            if (prod.variants.length() > 0) {
+                sku = prod.variants[0].sku;
+                break;
+            }
+        }
+    }
+    if (sku == "") {
+        return jsonError("No SKUs available for stress test", 404);
+    }
+
     let attempts: int = 5;
 
     let initialStock: int = 0;
@@ -243,17 +432,19 @@ export function handleSimulateFlashSaleConcurrency(ctx: AppRouteContext): AppHtt
             }
             let ordId: string = store.nextOrderId();
             successfulOrders.push(ordId);
+            let evPayload: string = "{\"simulatedOrderId\":\"" + ordId + "\",\"qty\":" + String(orderQty) + "}";
             store.appendOutbox(
                 "corr-sim-" + String(a),
                 "ORDER_CREATED",
-                "{\"simulatedOrderId\":\"" + ordId + "\",\"qty\":" + String(orderQty) + "}"
+                evPayload
             );
         } else {
             rejectedAttempts = rejectedAttempts + 1;
+            let rejPayload: string = "{\"sku\":\"" + sku + "\",\"requested\":" + String(orderQty) + ",\"available\":" + String(currStock) + "}";
             store.appendOutbox(
                 "corr-sim-" + String(a),
                 "ORDER_REJECTED_OVERDRAFT",
-                "{\"sku\":\"" + sku + "\",\"requested\":" + String(orderQty) + ",\"available\":" + String(currStock) + "}"
+                rejPayload
             );
         }
     }

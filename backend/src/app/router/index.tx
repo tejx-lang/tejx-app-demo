@@ -35,7 +35,9 @@ import {
     handleDeleteProduct,
     handleUpdateOrderFulfillment,
     handleListVendors,
-    handleCreateVendor
+    handleCreateVendor,
+    handleUpdateVendor,
+    handleDeleteVendor
 } from "../features/marketplace/handler.tx";
 
 // 3. Real-Time Financial Analytics & Outbox Pipeline
@@ -115,6 +117,8 @@ export function createAppRouter(): AppHttpRouter {
     // 4. Multi-Tenant Vendor Portal & Inventory Control
     router.get("/api/vendor/storefronts", handleListVendors);
     router.post("/api/vendor/storefronts", handleCreateVendor);
+    router.put("/api/vendor/storefronts/:vendorId", handleUpdateVendor);
+    router.deleteRoute("/api/vendor/storefronts/:vendorId", handleDeleteVendor);
     router.get("/api/vendor/inventory", handleGetVendorInventory);
     router.post("/api/vendor/stock", handleUpdateVendorStock);
     router.get("/api/vendor/promotions", handleGetPromotions);

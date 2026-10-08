@@ -20,10 +20,14 @@ import {
   fetchVendorPromotions,
   fetchVendorMetrics,
   saveProduct,
+  deleteProduct,
   fetchSnapshotOrders,
-  updateOrderFulfillment
+  updateOrderFulfillment,
+  fetchStorefronts,
+  createStorefront,
+  deleteStorefront
 } from '../services/api';
-import { AuthProfile, SnapshotInvoice } from '../services/types';
+import { AuthProfile, SnapshotInvoice, VendorStorefront } from '../services/types';
 
 interface VendorPortalViewProps {
   currentProfile?: AuthProfile | null;
@@ -31,7 +35,8 @@ interface VendorPortalViewProps {
 }
 
 export const VendorPortalView: React.FC<VendorPortalViewProps> = ({ currentProfile, onSwitchRole }) => {
-  const [selectedVendor, setSelectedVendor] = useState(currentProfile?.vendorId || 'vnd-aurora');
+  const [selectedVendor, setSelectedVendor] = useState(currentProfile?.vendorId || '');
+  const [vendors, setVendors] = useState<VendorStorefront[]>([]);
   const [inventory, setInventory] = useState<any[]>([]);
   const [orders, setOrders] = useState<SnapshotInvoice[]>([]);
   const [lowStockCount, setLowStockCount] = useState(0);
@@ -44,8 +49,8 @@ export const VendorPortalView: React.FC<VendorPortalViewProps> = ({ currentProfi
   // New Product Modal State
   const [showAddModal, setShowAddModal] = useState(false);
   const [newTitle, setNewTitle] = useState('');
-  const [newCategory, setNewCategory] = useState('Connectivity');
-  const [newBrand, setNewBrand] = useState('Aurora Labs');
+  const [newCategory, setNewCategory] = useState('Electronics');
+  const [newBrand, setNewBrand] = useState('');
   const [newBasePrice, setNewBasePrice] = useState(199);
   const [newSpecs, setNewSpecs] = useState('');
   const [isAdding, setIsAdding] = useState(false);
@@ -56,11 +61,36 @@ export const VendorPortalView: React.FC<VendorPortalViewProps> = ({ currentProfi
   const [editTitle, setEditTitle] = useState('');
   const [isEditing, setIsEditing] = useState(false);
 
-  const vendors = [
-    { id: 'vnd-aurora', name: 'Aurora Labs', tier: 'Platinum Seller' },
-    { id: 'vnd-zenith', name: 'Zenith Systems', tier: 'Gold Seller' },
-    { id: 'vnd-hyper', name: 'HyperGear Global', tier: 'Platinum Seller' }
-  ];
+  // Add Storefront Modal State
+  const [showAddStorefrontModal, setShowAddStorefrontModal] = useState(false);
+  const [storeName, setStoreName] = useState('');
+  const [storeId, setStoreId] = useState('');
+  const [storeTier, setStoreTier] = useState('Verified Partner');
+  const [isCreatingStore, setIsCreatingStore] = useState(false);
+
+  const loadStorefronts = async () => {
+    try {
+      const list = await fetchStorefronts();
+      setVendors(list || []);
+      if (list && list.length > 0) {
+        if (!selectedVendor || !list.some(v => v.id === selectedVendor)) {
+          const matched = currentProfile?.vendorId && list.some(v => v.id === currentProfile.vendorId)
+            ? currentProfile.vendorId
+            : list[0].id;
+          setSelectedVendor(matched);
+        }
+      } else {
+        setSelectedVendor('');
+      }
+    } catch (err) {
+      console.warn('Failed to load storefronts', err);
+      setVendors([]);
+    }
+  };
+
+  useEffect(() => {
+    loadStorefronts();
+  }, []);
 
   // Sync selectedVendor whenever currentProfile changes
   useEffect(() => {
@@ -117,12 +147,19 @@ export const VendorPortalView: React.FC<VendorPortalViewProps> = ({ currentProfi
   const handleAddProductSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTitle) return;
+    if (!selectedVendor) {
+      alert('Please create or select a storefront first before adding products.');
+      return;
+    }
     setIsAdding(true);
     try {
+      const activeVendor = vendors.find(v => v.id === selectedVendor);
+      const brandToUse = newBrand.trim() || (activeVendor ? activeVendor.name : 'Storefront Brand');
+
       const res = await saveProduct({
         title: newTitle,
         category: newCategory,
-        brand: newBrand,
+        brand: brandToUse,
         basePrice: Number(newBasePrice),
         salePrice: Number(newBasePrice),
         vendorId: selectedVendor,
@@ -132,6 +169,7 @@ export const VendorPortalView: React.FC<VendorPortalViewProps> = ({ currentProfi
         setShowAddModal(false);
         setNewTitle('');
         setNewSpecs('');
+        setNewBrand('');
         loadVendorData();
       } else {
         alert(res.error || 'Failed to add product');
@@ -166,6 +204,66 @@ export const VendorPortalView: React.FC<VendorPortalViewProps> = ({ currentProfi
       }
     } finally {
       setIsEditing(false);
+    }
+  };
+
+  const handleCreateStorefront = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!storeName.trim()) return;
+    setIsCreatingStore(true);
+    try {
+      const autoId = storeId.trim() || `vnd-${storeName.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
+      const res = await createStorefront({
+        id: autoId,
+        name: storeName.trim(),
+        tier: storeTier
+      });
+      if (res.success) {
+        await loadStorefronts();
+        setSelectedVendor(autoId);
+        setShowAddStorefrontModal(false);
+        setStoreName('');
+        setStoreId('');
+        setReplenishSuccessMsg(`Storefront tenant '${storeName}' registered and activated!`);
+        setTimeout(() => setReplenishSuccessMsg(null), 4000);
+      } else {
+        alert(res.error || 'Failed to create storefront');
+      }
+    } finally {
+      setIsCreatingStore(false);
+    }
+  };
+
+  const handleDeleteStorefront = async () => {
+    if (!selectedVendor) return;
+    if (!window.confirm(`Are you sure you want to delete storefront '${selectedVendor}'? This requires zero active products and historical orders.`)) return;
+    try {
+      const res = await deleteStorefront(selectedVendor);
+      if (res.success) {
+        setReplenishSuccessMsg(`Storefront '${selectedVendor}' deleted successfully.`);
+        await loadStorefronts();
+        setTimeout(() => setReplenishSuccessMsg(null), 4000);
+      } else {
+        alert(res.error || 'Failed to delete storefront');
+      }
+    } catch (err: any) {
+      alert('Error deleting storefront: ' + err.message);
+    }
+  };
+
+  const handleDeleteItem = async (productId: string) => {
+    if (!window.confirm('Are you sure you want to delete this product?')) return;
+    try {
+      const res = await deleteProduct(productId);
+      if (res.success) {
+        setReplenishSuccessMsg('Product removed successfully.');
+        loadVendorData();
+        setTimeout(() => setReplenishSuccessMsg(null), 4000);
+      } else {
+        alert(res.error || 'Failed to remove product');
+      }
+    } catch (err: any) {
+      alert('Error removing product: ' + err.message);
     }
   };
 
@@ -234,18 +332,28 @@ export const VendorPortalView: React.FC<VendorPortalViewProps> = ({ currentProfi
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <select
-            value={selectedVendor}
-            onChange={e => setSelectedVendor(e.target.value)}
-            className="input select-custom"
-            style={{ width: 'auto', minWidth: 220, fontWeight: 600, background: '#ffffff' }}
-          >
-            {vendors.map(v => (
-              <option key={v.id} value={v.id}>
-                {v.name} ({v.tier})
-              </option>
-            ))}
-          </select>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <select
+              value={selectedVendor}
+              onChange={e => setSelectedVendor(e.target.value)}
+              className="input select-custom"
+              style={{ width: 'auto', minWidth: 230, fontWeight: 600, background: '#ffffff' }}
+            >
+              {vendors.map(v => (
+                <option key={v.id} value={v.id}>
+                  {v.name} ({v.id})
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={() => setShowAddStorefrontModal(true)}
+              className="btn btn-secondary"
+              style={{ fontSize: '0.825rem', padding: '0.55rem 0.75rem' }}
+              title="Add New Storefront Tenant"
+            >
+              <Store size={14} /> + Storefront
+            </button>
+          </div>
 
           <button
             onClick={() => setShowAddModal(true)}
@@ -722,6 +830,117 @@ export const VendorPortalView: React.FC<VendorPortalViewProps> = ({ currentProfi
                   className="btn btn-primary"
                 >
                   {isEditing ? 'Updating...' : 'Save Changes'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Add Storefront Modal */}
+      {showAddStorefrontModal && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(15, 23, 42, 0.5)',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 100,
+            padding: 20
+          }}
+          onClick={() => setShowAddStorefrontModal(false)}
+        >
+          <div
+            className="card"
+            style={{
+              maxWidth: 480,
+              width: '100%',
+              background: '#ffffff',
+              borderRadius: 16,
+              padding: '1.75rem',
+              boxShadow: '0 20px 40px rgba(0, 0, 0, 0.15)'
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Store size={18} color="#7c3aed" />
+                <h3 style={{ fontSize: '1.15rem', fontWeight: 800, margin: 0, color: 'var(--text-primary)' }}>
+                  Register New Storefront Tenant
+                </h3>
+              </div>
+              <button
+                onClick={() => setShowAddStorefrontModal(false)}
+                style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer' }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateStorefront}>
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>
+                  Storefront Name *
+                </label>
+                <input
+                  type="text"
+                  className="input"
+                  value={storeName}
+                  onChange={e => setStoreName(e.target.value)}
+                  placeholder="e.g. Solaris Gear Inc."
+                  required
+                />
+              </div>
+
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>
+                  Storefront Tenant ID (Optional slug)
+                </label>
+                <input
+                  type="text"
+                  className="input"
+                  value={storeId}
+                  onChange={e => setStoreId(e.target.value)}
+                  placeholder="e.g. vnd-solaris"
+                />
+              </div>
+
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>
+                  Seller Tier
+                </label>
+                <select
+                  className="select-custom"
+                  value={storeTier}
+                  onChange={e => setStoreTier(e.target.value)}
+                  style={{ width: '100%', padding: '0.55rem 0.85rem' }}
+                >
+                  <option value="Verified Platinum">Verified Platinum</option>
+                  <option value="Gold Merchant">Gold Merchant</option>
+                  <option value="Verified Partner">Verified Partner</option>
+                </select>
+              </div>
+
+              <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowAddStorefrontModal(false)}
+                  className="btn btn-secondary"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isCreatingStore}
+                  className="btn btn-primary"
+                >
+                  {isCreatingStore ? 'Registering...' : 'Register Storefront'}
                 </button>
               </div>
             </form>

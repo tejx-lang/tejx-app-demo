@@ -40,11 +40,9 @@ BACKEND_HOST="127.0.0.1"
 BACKEND_PORT="${PORT:-8080}"
 FRONTEND_PORT="${VITE_PORT:-3000}"
 
-# 2. Build backend if not already built
-if [[ ! -x "$BACKEND_BIN" ]]; then
-    echo "==> Backend binary missing. Compiling with TejX..."
-    bash "$SCRIPT_DIR/backend/build.sh"
-fi
+# 2. Build backend
+echo "==> Compiling TejX Native Backend..."
+bash "$SCRIPT_DIR/backend/build.sh"
 
 # 3. Trap signals for graceful shutdown
 cleanup() {

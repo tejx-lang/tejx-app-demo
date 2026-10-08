@@ -34,8 +34,8 @@ class MarketplaceStore {
         this.invoices = new Map<string, SnapshotInvoice>();
         this.idempotencyMap = new Map<string, SnapshotInvoice>();
         this.outbox = [];
-        this.orderCounter = 100;
-        this.seedInitial();
+        this.orderCounter = 0;
+        this.hydrateFromMongo();
     }
 
     addVendor(vendor: MarketplaceVendor): void {
@@ -50,214 +50,109 @@ class MarketplaceStore {
         if (!exists) {
             this.vendorIds.push(vendor.id);
         }
+        this.persistVendor(vendor);
     }
 
-    private seedInitial(): void {
-        let t: int64 = now();
+    persistVendor(vendor: MarketplaceVendor): void {
+        let maybeDb = getMongoDatabase();
+        if (!isMongoActive() || maybeDb == None) return;
+        try {
+            let db: MongoDatabase = maybeDb as MongoDatabase;
+            db.upsertOne("storefronts", new MongoJsonObject({ id: vendor.id }), new MongoJsonObject(vendor.toJSON()));
+        } catch (e) {
+            print("[mongo-err] Failed to persist storefront: " + String(e));
+        }
+    }
 
-        // 1. Vendors
-        let v1 = new MarketplaceVendor("vnd-aurora", "Aurora Labs", "Verified Platinum", 4.96, 0.12, 0.008, 24, "active");
-        let v2 = new MarketplaceVendor("vnd-zenith", "Zenith Systems", "Gold Merchant", 4.88, 0.12, 0.015, 16, "active");
-        let v3 = new MarketplaceVendor("vnd-hyper", "HyperGear Global", "Verified Platinum", 4.92, 0.12, 0.011, 32, "active");
-        this.addVendor(v1);
-        this.addVendor(v2);
-        this.addVendor(v3);
+    deleteProduct(productId: string): void {
+        this.products.delete(productId);
+        let ids: string[] = [];
+        for (let i = 0; i < this.productIds.length(); i++) {
+            if (this.productIds[i] != productId) ids.push(this.productIds[i]);
+        }
+        this.productIds = ids;
+        let maybeDb = getMongoDatabase();
+        if (!isMongoActive() || maybeDb == None) return;
+        try {
+            let db: MongoDatabase = maybeDb as MongoDatabase;
+            db.deleteOne("marketplace_products", new MongoJsonObject({ id: productId }));
+        } catch (e) {
+            print("[mongo-err] Failed to delete product: " + String(e));
+        }
+    }
 
-        // 2. Products with Polymorphic Variants & Warehouses
-        let p1Variants: MarketplaceVariant[] = [
-            new MarketplaceVariant(
-                "SKU-SLM-100W",
-                "Starlink Mini Roam (100W DC)",
-                "Power: 100W DC, Dish: Ultra-Compact",
-                599.00,
-                75,
-                [new WarehouseStock("WH-US-EAST", 45), new WarehouseStock("WH-EU-WEST", 30)]
-            ),
-            new MarketplaceVariant(
-                "SKU-SLM-200W",
-                "Starlink Mini High-Performance (200W Dual-Feed)",
-                "Power: 200W Dual-Feed, Dish: High-Gain Array",
-                899.00,
-                35,
-                [new WarehouseStock("WH-US-EAST", 20), new WarehouseStock("WH-EU-WEST", 15)]
-            )
-        ];
-        let p1 = new MarketplaceProduct(
-            "mp-starlink-roam",
-            v1.id,
-            v1.name,
-            v1.rating,
-            "Starlink Mini Global Roam Satellite Terminal",
-            "Connectivity",
-            "SpaceX Starlink",
-            599.00,
-            509.15,
-            true,
-            15,
-            p1Variants,
-            110,
-            true,
-            4.95,
-            428,
-            "https://images.unsplash.com/photo-1541185933-ef5d8ed016c2?w=600&auto=format&fit=crop&q=80",
-            t
-        );
+    deleteVendor(vendorId: string): void {
+        this.vendors.delete(vendorId);
+        let ids: string[] = [];
+        for (let i = 0; i < this.vendorIds.length(); i++) {
+            if (this.vendorIds[i] != vendorId) ids.push(this.vendorIds[i]);
+        }
+        this.vendorIds = ids;
+        let maybeDb = getMongoDatabase();
+        if (!isMongoActive() || maybeDb == None) return;
+        try {
+            let db: MongoDatabase = maybeDb as MongoDatabase;
+            db.deleteOne("storefronts", new MongoJsonObject({ id: vendorId }));
+        } catch (e) {
+            print("[mongo-err] Failed to delete storefront: " + String(e));
+        }
+    }
 
-        let p2Variants: MarketplaceVariant[] = [
-            new MarketplaceVariant(
-                "SKU-ANC-BLK",
-                "Nomad ANC Titanium (Matte Black)",
-                "Color: Matte Obsidian, Driver: 40mm Beryllium",
-                249.00,
-                115,
-                [new WarehouseStock("WH-US-EAST", 60), new WarehouseStock("WH-EU-WEST", 55)]
-            ),
-            new MarketplaceVariant(
-                "SKU-ANC-SLV",
-                "Nomad ANC Titanium (Lunar Silver)",
-                "Color: Lunar Silver, Driver: 40mm Beryllium",
-                249.00,
-                75,
-                [new WarehouseStock("WH-US-EAST", 35), new WarehouseStock("WH-EU-WEST", 40)]
-            )
-        ];
-        let p2 = new MarketplaceProduct(
-            "mp-anc-ultra",
-            v2.id,
-            v2.name,
-            v2.rating,
-            "Nomad ANC Titanium Noise-Cancelling Headphones",
-            "Audio",
-            "Zenith Acoustic",
-            249.00,
-            199.20,
-            true,
-            20,
-            p2Variants,
-            190,
-            true,
-            4.89,
-            312,
-            "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=600&auto=format&fit=crop&q=80",
-            t
-        );
+    // Hydrate state strictly from MongoDB collections.
+    private hydrateFromMongo(): void {
+        let maybeDb = getMongoDatabase();
+        if (!isMongoActive() || maybeDb == None) return;
 
-        let p3Variants: MarketplaceVariant[] = [
-            new MarketplaceVariant(
-                "SKU-GAN-200W",
-                "HyperCharge 200W 4-Port GaN Multi-Country Brick",
-                "Ports: 3x USB-C + 1x USB-A, Pin: Modular Global",
-                89.00,
-                210,
-                [new WarehouseStock("WH-US-EAST", 120), new WarehouseStock("WH-EU-WEST", 90)]
-            )
-        ];
-        let p3 = new MarketplaceProduct(
-            "mp-gan-200w",
-            v3.id,
-            v3.name,
-            v3.rating,
-            "HyperCharge 200W Quad-Port GaN Travel Fast Charger",
-            "Power",
-            "HyperGear",
-            89.00,
-            75.65,
-            true,
-            15,
-            p3Variants,
-            210,
-            true,
-            4.93,
-            654,
-            "https://images.unsplash.com/photo-1583863788434-e58a36330cf0?w=600&auto=format&fit=crop&q=80",
-            t
-        );
+        try {
+            let db: MongoDatabase = maybeDb as MongoDatabase;
+            let vendorDocs = db.find("storefronts", new MongoJsonObject({}));
+            for (let i = 0; i < vendorDocs.length(); i++) {
+                let d = vendorDocs[i];
+                let id = d.string("id");
+                if (id == "") continue;
+                this.addVendor(new MarketplaceVendor(id, d.string("name"), d.string("tier"), d.float("rating"), d.float("commissionRate"), d.float("cancellationRate"), d.int("activeSkus"), d.string("status")));
+            }
 
-        let p4Variants: MarketplaceVariant[] = [
-            new MarketplaceVariant(
-                "SKU-STN-CRB",
-                "AeroCarbon Ergonomic Stand (Carbon Fiber)",
-                "Material: Toray 3K Carbon, Weight: 180g",
-                75.00,
-                145,
-                [new WarehouseStock("WH-US-EAST", 80), new WarehouseStock("WH-EU-WEST", 65)]
-            )
-        ];
-        let p4 = new MarketplaceProduct(
-            "mp-carbon-stand",
-            v1.id,
-            v1.name,
-            v1.rating,
-            "AeroCarbon Featherweight Foldable Laptop Stand",
-            "Workstation",
-            "Aurora Labs",
-            75.00,
-            65.00,
-            false,
-            0,
-            p4Variants,
-            145,
-            true,
-            4.85,
-            189,
-            "https://images.unsplash.com/photo-1527864550417-7fd91fc51a46?w=600&auto=format&fit=crop&q=80",
-            t
-        );
+            let productDocs = db.find("marketplace_products", new MongoJsonObject({}));
+            for (let i = 0; i < productDocs.length(); i++) {
+                let d = productDocs[i];
+                let id = d.string("id");
+                if (id == "") continue;
+                let variants: MarketplaceVariant[] = [];
+                let variantDocs = d.objectArray("variants");
+                for (let j = 0; j < variantDocs.length(); j++) {
+                    let vd = variantDocs[j];
+                    let warehouses: WarehouseStock[] = [];
+                    let warehouseDocs = vd.objectArray("warehouses");
+                    for (let k = 0; k < warehouseDocs.length(); k++) {
+                        warehouses.push(new WarehouseStock(warehouseDocs[k].string("code"), warehouseDocs[k].int("stock")));
+                    }
+                    variants.push(new MarketplaceVariant(vd.string("sku"), vd.string("name"), vd.string("optionValues"), vd.float("price"), vd.int("stock"), warehouses));
+                }
+                let product = new MarketplaceProduct(id, d.string("vendorId"), d.string("vendorName"), d.float("vendorRating"), d.string("title"), d.string("category"), d.string("brand"), d.float("basePrice"), d.float("salePrice"), d.bool("isFlashSale"), d.int("flashDiscountPercent"), variants, d.int("totalStock"), d.bool("isListed"), d.float("rating"), d.int("reviewCount"), d.string("image"), d.int64("createdAt"));
+                product.specifications = d.string("specifications");
+                this.products.set(id, product);
+                this.productIds.push(id);
+            }
 
-        this.products.set(p1.id, p1);
-        this.products.set(p2.id, p2);
-        this.products.set(p3.id, p3);
-        this.products.set(p4.id, p4);
-        this.productIds.push(p1.id);
-        this.productIds.push(p2.id);
-        this.productIds.push(p3.id);
-        this.productIds.push(p4.id);
-
-        // 3. Promotions
-        let pr1 = new PromotionRule("promo-flash-1", "vnd-zenith", "Flash Sale: 20% Off Audio Gear", "FLASH_SALE", 20, 1, true, "2026-10-31");
-        let pr2 = new PromotionRule("promo-volume-1", "vnd-hyper", "Nomad Cohort: 15% Off 5+ GaN Chargers", "VOLUME_TIER", 15, 5, true, "2026-11-15");
-        this.promotions.set(pr1.id, pr1);
-        this.promotions.set(pr2.id, pr2);
-
-        // 4. Initial Seed Invoice Snapshot & Outbox Event
-        let seedItem = new SnapshotInvoiceItem(
-            "SKU-SLM-100W",
-            "mp-starlink-roam",
-            "Starlink Mini Global Roam Satellite Terminal",
-            "vnd-aurora",
-            "Aurora Labs",
-            509.15,
-            1,
-            509.15,
-            40.73,
-            61.10,
-            448.05
-        );
-        let seedInvoice = new SnapshotInvoice(
-            "ord-genesis-101",
-            "idemp-seed-genesis-101",
-            "corr-genesis-trace-001",
-            "usr-1",
-            "elena@digitalnomad.io",
-            [seedItem],
-            509.15,
-            0.08,
-            40.73,
-            0.12,
-            61.10,
-            14.77,
-            448.05,
-            "CONFIRMED_ATOMIC",
-            t - 3600000
-        );
-        this.invoices.set(seedInvoice.orderId, seedInvoice);
-        this.idempotencyMap.set(seedInvoice.idempotencyKey, seedInvoice);
-
-        this.appendOutbox(
-            "corr-genesis-trace-001",
-            "ORDER_CONFIRMED",
-            "{\"orderId\":\"ord-genesis-101\",\"gmv\":509.15,\"commission\":61.10,\"status\":\"CONFIRMED_ATOMIC\"}"
-        );
+            let orderDocs = db.find("marketplace_orders", new MongoJsonObject({}));
+            for (let i = 0; i < orderDocs.length(); i++) {
+                let d = orderDocs[i];
+                let orderId = d.string("orderId");
+                if (orderId == "") continue;
+                let items: SnapshotInvoiceItem[] = [];
+                let itemDocs = d.objectArray("items");
+                for (let j = 0; j < itemDocs.length(); j++) {
+                    let item = itemDocs[j];
+                    items.push(new SnapshotInvoiceItem(item.string("sku"), item.string("productId"), item.string("title"), item.string("vendorId"), item.string("vendorName"), item.float("unitPrice"), item.int("quantity"), item.float("subtotal"), item.float("taxAmount"), item.float("commissionAmount"), item.float("vendorPayout")));
+                }
+                let invoice = new SnapshotInvoice(orderId, d.string("idempotencyKey"), d.string("correlationId"), d.string("customerId"), d.string("customerEmail"), items, d.float("grossMerchandiseValue"), d.float("taxRate"), d.float("totalTax"), d.float("platformCommissionRate"), d.float("totalPlatformCommission"), d.float("paymentProcessingFee"), d.float("netVendorPayout"), d.string("status"), d.int64("createdAt"));
+                this.invoices.set(orderId, invoice);
+                if (invoice.idempotencyKey != "") this.idempotencyMap.set(invoice.idempotencyKey, invoice);
+            }
+        } catch (e) {
+            print("[mongo-err] Marketplace hydration failed: " + String(e));
+        }
     }
 
     appendOutbox(correlationId: string, eventType: string, payload: string): OutboxEvent {
@@ -286,7 +181,7 @@ class MarketplaceStore {
             try {
                 let db: MongoDatabase = maybeDb as MongoDatabase;
                 let mDoc: MongoJsonObject = new MongoJsonObject(inv.toJSON());
-                db.insertOne("marketplace_orders", mDoc);
+                db.upsertOne("marketplace_orders", new MongoJsonObject({ orderId: inv.orderId }), mDoc);
             } catch (e) {
             }
         }
@@ -299,7 +194,7 @@ class MarketplaceStore {
                 let db: MongoDatabase = maybeDb as MongoDatabase;
                 let filter: MongoJsonObject = new MongoJsonObject({ id: p.id });
                 let updateDoc: MongoJsonObject = new MongoJsonObject(p.toJSON());
-                db.updateOne("marketplace_products", filter, updateDoc);
+                db.upsertOne("marketplace_products", filter, updateDoc);
             } catch (e) {
             }
         }
@@ -307,7 +202,7 @@ class MarketplaceStore {
 
     nextOrderId(): string {
         this.orderCounter = this.orderCounter + 1;
-        return "ord-flsh-" + String(this.orderCounter);
+        return "ord-" + String(now()) + "-" + String(this.orderCounter);
     }
 }
 
