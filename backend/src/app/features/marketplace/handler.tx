@@ -622,10 +622,6 @@ export function handleListOrders(ctx: AppRouteContext): AppHttpResponse {
             isMyOrder = true;
         } else if (myEmail != "" && (inv.customerEmail == myEmail || inv.customerEmail.toLowerCase() == myEmail.toLowerCase())) {
             isMyOrder = true;
-        } else if (claims.role == "customer" && (inv.customerId == "customer" || inv.customerId == "usr-customer-1" || inv.customerEmail == "customer@marketplace.io")) {
-            isMyOrder = true;
-        } else if (claims.role == "vendor" && (inv.customerId == "vendor" || inv.customerId == "usr-vendor-1" || inv.customerEmail == "vendor@marketplace.io")) {
-            isMyOrder = true;
         }
 
         if (isMyOrder) {
@@ -656,9 +652,7 @@ export function handleGetOrderDetails(ctx: AppRouteContext): AppHttpResponse {
     if (!isAdmin(claims)) {
         let isOwner: bool = (claims.sub != "" && (inv.customerId == claims.sub || inv.customerId.indexOf(claims.sub) >= 0)) ||
                             (claims.originalSub != "" && (inv.customerId == claims.originalSub || inv.customerId.indexOf(claims.originalSub) >= 0)) ||
-                            (claims.email != "" && inv.customerEmail == claims.email) ||
-                            (claims.role == "customer" && (inv.customerId == "customer" || inv.customerId == "usr-customer-1" || inv.customerEmail == "customer@marketplace.io")) ||
-                            (claims.role == "vendor" && (inv.customerId == "vendor" || inv.customerId == "usr-vendor-1" || inv.customerEmail == "vendor@marketplace.io"));
+                            (claims.email != "" && (inv.customerEmail == claims.email || inv.customerEmail.toLowerCase() == claims.email.toLowerCase()));
         if (isOwner) {
             // Buyer is authorized to view their own purchase
         } else if (claims.role == "vendor" && claims.vendorId != "") {

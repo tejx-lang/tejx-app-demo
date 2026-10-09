@@ -1,9 +1,33 @@
-# TejX Demo: NomadOS Full-Stack Super-App
+# TejX Enterprise Multi-Vendor E-Commerce & Financial Platform
 
-A full-stack, modular **Digital Nomad Command Center & Super-App** built with:
-1. **`mongo-sdk/`**: A standalone, pure TejX MongoDB wire-protocol package.
-2. **`backend/`**: A high-performance REST API service compiled directly from TejX into native machine code.
-3. **`frontend/`**: An ultra-modern React dashboard aggregating **25+ public APIs** with real-time sync to the TejX backend and MongoDB.
+A full-stack, enterprise-grade **Multi-Vendor Marketplace, Real-Time Financial Analytics & Operations Engine** built with:
+1. **`mongo-sdk/`**: Standalone, pure TejX MongoDB wire-protocol package (OP_MSG, full BSON encoder/decoder, SCRAM authentication).
+2. **`backend/`**: High-performance REST API service compiled natively with the TejX compiler into native machine code with zero-overdraft atomic stock reservation and dual-mode persistence.
+3. **`frontend/`**: Ultra-modern React + TypeScript operations dashboard featuring the public Marketplace, Vendor Operations Portal, Financial Analytics Matrix, and Enterprise IAM & Security Center.
+
+---
+
+## 📸 Platform Overview & Visual Tour
+
+### 1. Aura Marketplace Catalog
+Public multi-vendor marketplace featuring faceted category & storefront filters, flash deal discounts, real-time cart calculation, tax estimation, and atomic checkout.
+
+![Marketplace Catalog](images/Marketplace.png)
+
+### 2. Multi-Tenant Vendor Operations Portal
+Dedicated portal for independent vendors to manage storefront listings, multi-location warehouse SKU inventories, stock replenishment, and fulfillment orders.
+
+![Vendor Operations Portal](images/VendorPortal.png)
+
+### 3. Real-Time Financial Analytics Matrix
+Executive analytics suite tracking Gross Merchandise Value (GMV), 12% platform revenue cut, 8% statutory tax escrow, net vendor payouts, Top-K revenue products, and automated cold data lifecycle tiering.
+
+![Financial Analytics](images/Analytics.png)
+
+### 4. Enterprise Identity, Access & Security Management (IAM)
+Administrator-only security center managing user lifecycles, role archetypes (`admin`, `vendor`, `customer`, `guest`), credentials, storefront tenant associations, and audit controls.
+
+![Identity & Access Management](images/UserManagement.png)
 
 ---
 
@@ -11,78 +35,103 @@ A full-stack, modular **Digital Nomad Command Center & Super-App** built with:
 
 ```text
 tejx-demo/
-├── mongo-sdk/                 # Standalone pure TejX MongoDB Driver Package
+├── images/                        # Platform UI screenshots & architecture diagrams
+│   ├── Marketplace.png            # Aura Marketplace catalog & cart view
+│   ├── VendorPortal.png           # Vendor inventory & SKU warehouse operations
+│   ├── Analytics.png              # Real-time financial analytics matrix
+│   └── UserManagement.png         # Enterprise IAM & Security Center
+│
+├── mongo-sdk/                     # Standalone pure TejX MongoDB Driver Package
 │   ├── src/
-│   │   ├── index.tx           # Public driver exports (MongoClient, MongoDatabase)
-│   │   ├── client.tx          # OP_MSG wire protocol client
-│   │   ├── bson.tx            # Full BSON serializer and deserializer
-│   │   ├── auth.tx            # SCRAM-SHA-256 and SCRAM-SHA-1 authentication
-│   │   ├── config.tx          # Mongo URI & configuration options
-│   │   └── json.tx            # Typed BSON-to-JSON bridge
+│   │   ├── index.tx               # Public driver exports (MongoClient, MongoDatabase)
+│   │   ├── client.tx              # OP_MSG wire protocol client
+│   │   ├── bson.tx                # Full BSON serializer and deserializer
+│   │   ├── auth.tx                # SCRAM-SHA-256 and SCRAM-SHA-1 authentication
+│   │   ├── config.tx              # Mongo URI & configuration parser
+│   │   └── json.tx                # Typed BSON-to-JSON bridge
 │   ├── tests/
-│   │   ├── test_bson.tx       # BSON encoder/decoder verification
-│   │   └── test_client.tx     # Client handshake test
+│   │   ├── test_bson.tx           # BSON encoder/decoder verification
+│   │   └── test_client.tx         # Client handshake test
 │   └── README.md
 │
-├── backend/                   # Native TejX REST Backend
+├── backend/                       # Native TejX REST Backend Engine
 │   ├── src/
-│   │   ├── main.tx            # Entry point
-│   │   ├── server/            # HTTP server, router & CORS preflight support
-│   │   └── app/               # Core state, domain models, feature handlers
-│   │       ├── features/      # Users, Products, Orders, Events, Reports, Nomad
-│   │       └── server.tx      # MongoDB probe with automatic in-memory fallback
-│   ├── build.sh               # Native Mach-O compiler script
+│   │   ├── main.tx                # Server entry point & startup probe
+│   │   ├── server/                # HTTP server, routing engine, CORS preflight
+│   │   └── app/                   # Core state, domain models, feature handlers
+│   │       ├── core/              # Dual persistence probe, MongoDB bridge, security
+│   │       ├── router/            # Route dispatch & parameter extraction
+│   │       └── features/
+│   │           ├── auth/          # Cryptographic JWT, RBAC, session blacklist, IAM
+│   │           ├── marketplace/   # Catalog, cart, checkout, inventory, orders
+│   │           ├── analytics/     # Financial ledger, GMV, Top-K, data tiering
+│   │           └── database/      # Database telemetry & connection diagnostics
+│   ├── build.sh                   # Native Mach-O compilation script
 │   └── README.md
 │
-├── frontend/                  # React Frontend Application (Vite + React)
+├── frontend/                      # React Frontend Application (Vite + React + TS)
 │   ├── src/
-│   │   ├── components/        # Header, KPI strip, and 26 modular widgets
-│   │   ├── services/api.js    # Data aggregator for 25+ APIs + TejX backend
-│   │   ├── styles/index.css   # Glassmorphic dark UI design system
-│   │   ├── App.jsx            # Main dashboard coordinator
-│   │   └── main.jsx
-│   ├── vite.config.js         # API proxy to TejX backend
+│   │   ├── components/            # Marketplace, VendorPortal, Analytics, Security
+│   │   ├── services/api.ts        # Typed HTTP client & JWT session management
+│   │   ├── styles/index.css       # Clean, modern design system
+│   │   ├── App.tsx                # Main application coordinator & view router
+│   │   └── main.tsx
+│   ├── vite.config.js             # Dev server & reverse proxy configuration
 │   └── README.md
 │
-├── start.sh                   # Unified single-command launcher
-├── package.json               # Root scripts runner
+├── start.sh                       # Unified single-command launcher
+├── package.json                   # Root workspace management
 └── README.md
 ```
 
 ---
 
-## ⚡ The 25+ APIs in NomadOS
+## 🏛️ Key Platform Modules
 
-NomadOS integrates 25+ distinct data sources organized into responsive category grids:
+### 1. Aura Marketplace (`/marketplace`)
+- **Public Catalog Browsing**: Open to everyone (guests and authenticated users).
+- **Faceted Search Pipeline**: Real-time aggregation across categories, price brackets, and brands.
+- **Atomic Zero-Overdraft Checkout**: Pre-flight validation guarantees variant stock never dips below zero; rejects concurrent overdrafts with `409 Conflict`.
+- **API Idempotency Layer**: `X-Idempotency-Key` prevents duplicate charges and double order deductions on accidental retries.
+- **Point-in-Time Invoice Snapshots**: Historical order records snapshot pricing, taxes, and vendor cuts at purchase time.
+- **Strict User Order Scoping**: Marketplace "My Orders" displays orders belonging strictly to the signed-in user (`customerId == claims.sub || customerEmail == claims.email`), keeping personal purchases completely separate from storefront sales.
 
-| # | Category | Widget Name | Data Source / Public API | Key Features |
-|---|---|---|---|---|
-| 1 | **Travel & Environment** | Current Weather | [Open-Meteo Weather API](https://open-meteo.com) | Real-time temperature, wind speed, weather code across global nomad hubs |
-| 2 | **Travel & Environment** | Air Quality Index | [Open-Meteo Air Quality](https://air-quality-api.open-meteo.com) | European AQI, PM2.5, PM10, and Ozone pollution levels |
-| 3 | **Travel & Environment** | IP Geolocation | [ipapi.co](https://ipapi.co) / [IP-API](https://ip-api.com) | Detects client IP, city, region, ISP network, and timezone |
-| 4 | **Travel & Environment** | Country Explorer | [REST Countries API](https://restcountries.com) | Capital, population, official currency, national flag |
-| 5 | **Travel & Environment** | World Time Clocks | [TimeAPI](https://timeapi.io) | Multi-timezone synchronized clocks (Tokyo, London, NYC, Sydney, Dubai, Paris) |
-| 6 | **Travel & Environment** | Public Holidays | [Nager.Date API](https://date.nager.at) | Upcoming statutory holidays by country and year |
-| 7 | **Finance & Markets** | Live Crypto Tracker | [CoinGecko API](https://coingecko.com) | Bitcoin, Ethereum, Solana, Cardano, Dogecoin with 24h change |
-| 8 | **Finance & Markets** | Currency Converter | [Frankfurter Exchange API](https://frankfurter.app) | Live forex exchange rates (USD, EUR, GBP, JPY, CAD, INR) |
-| 9 | **Finance & Markets** | Stock Watchlist | [Alpha Vantage](https://alphavantage.co) / [Finnhub](https://finnhub.io) | Tech market price ticks (AAPL, NVDA, MSFT, GOOGL, TSLA) |
-| 10 | **Finance & Markets** | Financial Sentiment | Market Sentiment Radar | Fear & Greed gauge, volatility index (VIX), market momentum |
-| 11 | **Productivity & Tools** | Free Dictionary | [Free Dictionary API](https://dictionaryapi.dev) | Word definitions, phonetics, parts of speech, and usage examples |
-| 12 | **Productivity & Tools** | Daily Activity Idea | [Bored API](https://bored-api.appbrewery.com) | Random curated productive and leisure tasks for digital nomads |
-| 13 | **Productivity & Tools** | QR Code Generator | [QR Server API](https://goqr.me/api) | Real-time text/URL to downloadable QR code |
-| 14 | **Productivity & Tools** | Email Validator | [Mailboxlayer](https://mailboxlayer.com) Format Spec | Email syntax check, corporate domain classification, deliverability score |
-| 15 | **Productivity & Tools** | Global Tech News | [HackerNews Firebase API](https://news.ycombinator.com) | Live top 5 tech stories with upvotes and direct article links |
-| 16 | **Health & Fitness** | Recipe Explorer | [TheMealDB API](https://themealdb.com) | Random meal generator with photo, ingredients list, and modal cooking steps |
-| 17 | **Health & Fitness** | Nutrition Calculator | [Edamam Nutrition Model](https://edamam.com) | Calorie slider calculating daily protein, carb, fat, and water targets |
-| 18 | **Health & Fitness** | Hotel Workout Routine | [ExerciseDB](https://rapidapi.com) / [Wger](https://wger.de) | Daily bodyweight exercise program for travelers |
-| 19 | **Cosmic Zen** | NASA Astronomy Picture | [NASA APOD API](https://api.nasa.gov) | Daily high-res cosmic photography with scientific explanation |
-| 20 | **Cosmic Zen** | Nomad Motivation | [ZenQuotes](https://zenquotes.io) / [Type.fit](https://type.fit) | Inspirational quotes with one-click clipboard copy |
-| 21 | **Cosmic Zen** | Trending Shows | [TVMaze API](https://tvmaze.com) | Top trending TV series with ratings, genres, and poster artwork |
-| 22 | **Cosmic Zen** | Gaming Releases | [IGDB](https://igdb.com) / [OpenCritic](https://opencritic.com) | Notable video game titles, review scores, and platforms |
-| 23 | **Cosmic Zen** | Pokémon Pokédex | [PokeAPI](https://pokeapi.co) | Interactive Pokédex with animated sprites, stats, and types |
-| 24 | **Cosmic Zen** | Anime Schedule | [Jikan API](https://jikan.moe) (MyAnimeList) | Top anime releases with scores, episode count, and artwork |
-| 25 | **Cosmic Zen** | Pet Stress Relief | [Dog.CEO API](https://dog.ceo) / [The Cat API](https://thecatapi.com) | Instant random pet photo button for travel fatigue relief |
-| 26 | **Core Integration** | **TejX + MongoDB Hub** | TejX REST Backend | Live CRUD for Users, Products, Orders, Nomad Notes, and Audit Events |
+### 2. Vendor Operations Portal (`/vendor`)
+- **Storefront Isolation**: Independent vendors can only manage products, inventories, and fulfillment records for their assigned storefront (`vendorId`).
+- **Multi-Location Warehouse Inventory**: SKU tracking across primary, regional, and reserve warehouses.
+- **Quick Restock & Full Product Editor**: In-place SKU restock actions and rich multi-variant configuration updates.
+
+### 3. Financial & Real-Time Analytics Matrix (`/analytics`)
+- **Financial Metric Breakdown**: Instant computation of GMV, 12% platform revenue cut, 8% sales tax escrow, and net vendor payouts.
+- **Top-K Revenue Leaders**: Ranked product analysis by unit sales and gross revenue.
+- **Data Lifecycle Tiering**: Automated archival of historical transactions to cold BSON storage.
+- **DevOps Telemetry**: Outbox event stream inspector, token-bucket rate limiter metrics, and stress-testing harness.
+
+### 4. Identity, Access & Security Management (IAM) (`/security`)
+- **Strict RBAC Enforcement**:
+  - `admin`: Full platform control, user directory CRUD, financial ledger, and database tools.
+  - `vendor`: Storefront catalog management, SKU restocking, and fulfillment orders.
+  - `customer`: Public browsing, cart checkout, and personal order history.
+  - `guest`: Read-only catalog browsing.
+- **Cryptographic JWT Sessions**: Stateless token verification extracting authenticated claims (`sub`, `role`, `vendorId`, `email`).
+- **Token Blacklisting**: Immediate logout revocation using an in-memory and persistent blacklist cache.
+- **Zero Hardcoded Backdoors**: Strict credential validation without mock fallbacks or demo bypasses.
+
+---
+
+## 🍃 Dual-Engine Persistence Architecture
+
+The platform features an enterprise dual-persistence engine:
+
+1. **MongoDB Live Mode** (`mongodb://127.0.0.1:27017`):
+   - Communicates via `mongo-sdk` using pure BSON wire-protocol (OP_MSG).
+   - Persists all collections (`users`, `marketplace_products`, `marketplace_orders`, `storefronts`, `outbox_events`).
+   - The top navigation displays a green **`MongoDB Live`** indicator.
+
+2. **Resilient In-Memory Fallback Mode** (`memory://local-runtime`):
+   - If MongoDB is offline or disconnected, the backend seamlessly falls back to high-speed in-memory state.
+   - All mutations, checkouts, and inventory updates continue serving without server crashes or 500 errors.
+   - The top navigation displays an amber **`In-Memory`** status indicator.
 
 ---
 
@@ -95,67 +144,73 @@ cd tejx-demo
 ./start.sh
 ```
 
-This will:
-1. Automatically compile the TejX backend binary with `backend/build.sh`.
-2. Start the native TejX HTTP backend at `http://127.0.0.1:8080`.
-3. Start the Vite React development server at `http://localhost:3000`.
+This single command will:
+1. Load environment variables from `backend/.env` and `frontend/.env`.
+2. Compile the native TejX backend binary with `backend/build.sh`.
+3. Launch the native TejX backend on `http://127.0.0.1:8080`.
+4. Launch the React frontend on `http://localhost:3000`.
 
 ### 2. Manual Commands
 
 ```bash
-# Build the TejX backend
-npm run build:backend
-
-# Test the Mongo SDK
-npm run test:sdk
+# Build the native backend binary
+bash backend/build.sh
 
 # Run the backend standalone
 ./backend/build/server
 
-# Run the React frontend
+# Test the Mongo SDK wire protocol driver
+npm run test:sdk
+
+# Run the React frontend in development mode
 npm run start:frontend
 ```
 
 ---
 
-## ⚙️ Environment Configuration (`.env`)
-
-Both backend and frontend are configured via environment files:
+## ⚙️ Environment Configuration
 
 ### Backend (`backend/.env`)
 
 ```env
 PORT=8080
 HOST=127.0.0.1
-MONGO_URI=mongodb://127.0.0.1:27017/tejx_nomad_db
-# Initial root administrator. Omit either value only for local development;
-# each falls back to admin.
+MONGO_URI=mongodb://127.0.0.1:27017/tejx_marketplace_db
+# Initial root administrator provisioned at startup
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=admin
+JWT_SECRET=super-secret-jwt-key-for-tejx-marketplace-production
 ```
-
-The backend seeds this root account on startup. Anonymous visitors can create
-a browse-only guest session; only a verified root administrator can use the
-demo role switcher to enter the customer or vendor views.
 
 ### Frontend (`frontend/.env`)
 
 ```env
 VITE_PORT=3000
 VITE_BACKEND_URL=http://127.0.0.1:8080
-VITE_APP_TITLE=NomadOS | Digital Nomad Command Center
+VITE_APP_TITLE=Aura Marketplace | Multi-Vendor E-Commerce & Financial Platform
 ```
 
 ---
 
-## 🍃 MongoDB Integration & Dual-Mode Persistence
+## 🔌 Core API Endpoints
 
-1. **When MongoDB is running** (`mongodb://127.0.0.1:27017`):
-   - The TejX backend connects using `mongo-sdk` via pure BSON wire protocol.
-   - All users, products, orders, notes, and audit events are persisted in the database.
-   - The frontend displays a green `MongoDB Live` status indicator.
-
-2. **When MongoDB is not running**:
-   - The backend gracefully switches to `memory://local-runtime`.
-   - The application continues serving all routes and mutations seamlessly in memory with seed data.
-   - The frontend displays an amber `In-Memory` status indicator.
+| Method | Path | Access Scope | Description |
+|---|---|---|---|
+| `POST` | `/api/auth/login` | Public | Authenticates credentials and returns signed JWT |
+| `GET` | `/api/auth/me` | Authenticated | Retrieves current authenticated profile from JWT |
+| `POST` | `/api/auth/logout` | Authenticated | Revokes active token and adds to blacklist |
+| `GET` | `/api/auth/users` | Admin Only | Lists all registered user accounts |
+| `POST` | `/api/auth/users` | Admin Only | Provisions a new user account with role & tenant |
+| `PUT` | `/api/auth/users/:id` | Admin Only | Updates user details, email, or role archetype |
+| `DELETE` | `/api/auth/users/:id` | Admin Only | Deletes a user account |
+| `GET` | `/api/marketplace/catalog` | Public | Fetches products with faceted filtering |
+| `POST` | `/api/marketplace/checkout` | Authenticated | Executes atomic zero-overdraft checkout |
+| `GET` | `/api/marketplace/orders` | Authenticated | Retrieves scoped order history (personal or vendor) |
+| `GET` | `/api/marketplace/orders/:id` | Authenticated | Fetches immutable point-in-time order snapshot |
+| `GET` | `/api/marketplace/vendor/inventory` | Vendor / Admin | Retrieves warehouse SKU allocations |
+| `POST` | `/api/marketplace/vendor/inventory/stock` | Vendor / Admin | Replenishes warehouse stock for a SKU |
+| `POST` | `/api/marketplace/products` | Vendor / Admin | Creates or updates product specifications |
+| `GET` | `/api/analytics/realtime` | Authenticated | Computes GMV, platform fees, taxes, and vendor payout |
+| `GET` | `/api/analytics/top-products` | Authenticated | Returns Top-K revenue-generating products |
+| `POST` | `/api/analytics/tiering/run` | Admin Only | Triggers automated data lifecycle archival run |
+| `GET` | `/api/db/health` | Public | Inspects database connection status and telemetry |

@@ -1,72 +1,117 @@
-# TejX Enterprise Multi-Vendor Marketplace & Real-Time Financial Analytics Engine
+# TejX Enterprise Multi-Vendor Marketplace & Real-Time Financial Analytics Backend
 
-Ultra high-performance distributed marketplace backend built in TejX, compiled natively with LLVM and integrating direct MongoDB wire-protocol (`mongo-sdk`).
+High-performance native REST backend compiled directly from TejX into native machine code, featuring direct MongoDB wire-protocol integration (`mongo-sdk`), cryptographic JWT authentication, strict role-based access control (RBAC), multi-tenant isolation, and zero-overdraft atomic inventory transactions.
 
 ---
 
 ## 🏛 The 5 Production Pillars
 
 ### 🔑 1. Identity, Security & Access Control (IAM)
-- **Asymmetric JWT Authentication**: Prevents unnecessary database lookup overhead on every single API request using Ed25519 / EdDSA public/private key verification pairs.
-- **Role-Based Access Control (RBAC)**: Strict 4-tier enforcement:
-  - `guest`: Anonymous catalog browsing & facet calculation.
-  - `customer`: Multi-vendor checkout, idempotency replay, invoice access.
-  - `vendor`: Inventory allocation, warehouse stock replenishment, staff account provisioning.
-  - `admin`: Super-admin platform controls, financial commission ledger, top-k analytics, and data lifecycle tiering.
-- **Granular Staff Permissions**: Vendors create restricted sub-accounts for staff (`inventory:read`, `inventory:write`, `orders:read`, `orders:fulfillment`, `finance:read`).
-- **Token Blacklist Cache**: Instant session revocation and logout with zero-latency in-memory and persistent blacklist checks.
-- **Session replacement**: A successful login or authorized role switch revokes
-  the token presented with that request, preventing an old elevated session
-  from remaining active.
+- **Cryptographic JWT Authentication**: Verifies request tokens statelessly via `Authorization: Bearer <token>`, extracting authenticated claims (`sub`, `role`, `vendorId`, `email`) without repetitive database roundtrips.
+- **Strict 4-Tier Role-Based Access Control (RBAC)**:
+  - `admin`: Platform Super-Admin. Full control over user management, financial commission ledgers, top-k analytics, and database operations.
+  - `vendor`: Storefront operator. Managing warehouse inventory, SKU stock replenishment, and viewing fulfillment orders containing their items.
+  - `customer`: Marketplace shopper. Browsing public catalog, atomic checkout, and viewing personal purchase order history.
+  - `guest`: Read-only anonymous access to catalog, categories, and faceted search.
+- **Admin-Gated User Management**: All IAM routes (`GET /api/auth/users`, `POST /api/auth/users`, `PUT /api/auth/users/:id`, `DELETE /api/auth/users/:id`, `POST /api/auth/users/:id/password`) strictly verify `isAdmin(claims)` and reject unauthorized requests with `403 Forbidden`.
+- **Tenant & Identity Isolation**:
+  - Marketplace "My Orders" scopes strictly to the signed-in user (`customerId == claims.sub || customerEmail == claims.email`), preventing vendors or customers from seeing each other's purchases.
+  - Storefront fulfillment orders (`?vendorId=...`) are partitioned so vendors can only inspect orders containing items from their assigned storefront.
+- **Token Blacklist Cache**: Supports immediate session revocation and logout with in-memory and persistent blacklist verification.
+- **Zero Hardcoded Bypasses**: All credentials and permissions are validated against live accounts without mock backdoor fallbacks.
 
 ### 🛍 2. Polymorphic Product Catalog Engine
-- **Polymorphic Variant Architecture**: Deep configuration options (combinations of size, color, storage, power, fabric) embedded directly within a single product document rather than split into multiple tables.
-- **Dynamic Category Specifications**: Flexible schema that allows vendors to add custom technical attributes based on category (e.g., "Battery Capacity" for electronics, "Material" for clothing).
-- **Fuzzy Multi-Field Search**: Supports typos, partial matches, and field weighting.
-- **Faceted Filter Navigation**: Dynamically calculates and returns the number of matching items remaining in various categories, price brackets, and brands based on active search parameters.
-- **Automated Stock Warnings**: Background watchers that flag listings automatically when specific stock levels drop below a vendor-defined threshold (< 10 units).
+- **Polymorphic Variant Architecture**: Variant combinations (SKU, title, options, price, stock, multi-warehouse distribution) embedded directly in product models.
+- **Dynamic Category Specifications**: Extensible JSON specifications tailored to specific categories (e.g., power ratings, materials, dimensions).
+- **Faceted Aggregation Pipeline**: Dynamic real-time calculation of remaining items across categories, brands, and price tiers ($0-$100, $100-$300, $300-$600, $600+).
+- **Automated Stock Threshold Warnings**: Background alerts trigger whenever SKU quantities fall below the safety threshold (< 10 units).
 
 ### 🛒 3. High-Concurrency Transaction Engine
-- **Multi-Vendor Multi-Item Carts**: Checkouts containing items from multiple distinct vendors in a single operation, automatically breaking down into accurate vendor sub-orders.
-- **Multi-Document ACID Transactions**: Wraps the entire checkout process in a database transaction boundary—ensuring inventory deduction, invoice generation, and customer profile updates all succeed or fail together.
-- **Zero-Overdraft Concurrency Protection**: Utilizes atomic database updates to ensure item quantities never fall below zero, rejecting purchase requests with `409 Conflict` the millisecond stock hits empty.
-- **API Idempotency Layer**: Captures unique headers (`X-Idempotency-Key`) to guarantee that even if a user clicks "Pay Now" multiple times, they are only charged once and receive the exact same invoice.
-- **Point-in-Time Invoice Isolation**: Snapshots product details (price, tax percentages, seller details) inside the order document at the exact second of purchase, protecting historical financial metrics from future catalog modifications.
+- **Multi-Vendor Cart Processing**: Carts containing items from distinct independent vendors are checked out in a single atomic operation.
+- **Zero-Overdraft Concurrency Protection**: Pre-flight atomic stock checks verify every SKU across all vendors before stock is committed. If any variant's available inventory is insufficient, the checkout halts immediately with `409 Conflict` and logs an `ORDER_REJECTED_OVERDRAFT` event. Stock never dips below zero.
+- **API Idempotency Guarantee**: Requests sending `X-Idempotency-Key` or `Idempotency-Key` return the existing order snapshot on duplicates, preventing accidental double-charging and duplicate stock deductions.
+- **Point-in-Time Invoice Isolation**: Orders freeze snapshot prices, tax calculations, commission splits, and vendor payouts at checkout time, shielding historical accounting from future catalog changes.
 
 ### 📈 4. Real-Time Analytics Matrix
-- **Multi-Dimensional Sales Aggregations**: Processes real-time calculation matrices for Gross Merchandise Value (GMV), 12% platform commission cut, 8% tax, 2.9% gateway fee, and net vendor payout over flexible tracking periods (hourly, daily, monthly).
-- **Materialized View Caching**: Runs heavy analytical calculations asynchronously on isolated database nodes and updates static pre-aggregated view models, ensuring dashboards load in <2ms without system-wide table sweeps.
-- **Platform Commission Ledger**: Tracks marketplace cuts, fixed platform fees, and payment gateway percentages across all vendor accounts for administrative auditing.
-- **Top-K Analytical Grouping**: Automatically ranks and tracks top-selling products and categories based on both sales volume and revenue generation.
-- **Automated Data Lifecycle Tiering**: Automatically transfers order files older than a year to cold, cost-effective storage clusters while keeping them completely accessible for annual tax reporting.
+- **Multi-Dimensional Sales Aggregations**: Real-time calculations of Gross Merchandise Value (GMV), 12% platform revenue cut, 8% sales tax escrow, and net vendor payout across customizable tracking periods (last hour, 24h, 7d, 30d, all-time).
+- **Tenant-Scoped Analytics**: Vendors calling `/api/analytics/realtime` receive calculations strictly scoped to their own storefront sales, while platform administrators view global numbers.
+- **Top-K Revenue Leaders**: Ranks top products and categories by unit volume and gross revenue.
+- **Automated Data Lifecycle Tiering**: Transfers historical orders older than 365 days into compressed cold BSON storage while preserving tax audit accessibility.
 
-### 🛡 5. Distributed Event Handling & DevOps Optimization
-- **Adaptive Token-Bucket Rate Limiting**: Perimeter defense system that restricts malicious traffic by user ID or IP, prioritizing essential checkout paths over heavy analytic report downloads.
-- **Transactional Outbox Pipeline**: Writes transactional state changes and their corresponding event triggers inside the exact same database boundary.
-- **Change Stream Bus Link**: Asynchronously tails the database transaction logs to stream confirmed order events out into message brokers (like Kafka or RabbitMQ).
-- **Cross-Service Request Tracing**: Injects unique identifiers (`X-Correlation-ID`) across API thresholds, allowing engineers to trace a transaction's journey from incoming request to final database write across system logs.
-- **Global Exception Catcher**: Centralized error-handling middleware that intercepts unexpected system cracks, logs the exact technical fault securely, and masks raw stack traces from end users.
+### 🛡 5. Distributed Event Handling & Reliability
+- **Transactional Outbox Pipeline**: Mutation events are committed into an in-memory and MongoDB-backed `outbox_events` stream, decoupling synchronous request paths from downstream webhooks.
+- **Adaptive Token-Bucket Rate Limiter**: Guards sensitive endpoints against brute-force attacks and denial-of-service attempts.
+- **Correlation ID Tracing**: Attaches `X-Correlation-ID` across requests, outbox records, and logs for end-to-end auditability.
+- **Resilient Dual-Mode Persistence**: Automatically communicates with MongoDB via `mongo-sdk`; gracefully falls back to `memory://local-runtime` without service disruption if MongoDB is unavailable.
 
 ---
 
-## 🚀 Quick Start
+## 🛠️ Build & Execution
 
 ### Prerequisites
-- Docker (for MongoDB on `127.0.0.1:27017`)
-- Node.js 18+ (for React Frontend)
-- TejX compiler (`tejxc`)
+- Native TejX Compiler (`tx` / `bash backend/build.sh`)
+- Operating System: macOS / Linux
 
-### Launch Application
+### Build Native Binary
 ```bash
-./start.sh
+bash backend/build.sh
+```
+This compiles `backend/src/main.tx` and all modules into the native executable: `backend/build/server`.
+
+### Run Standalone
+```bash
+./backend/build/server
 ```
 
-- **Frontend UI**: http://localhost:3000
-- **TejX Backend API**: http://127.0.0.1:8080
-- **MongoDB Connection**: `mongodb://root:password@127.0.0.1:27017/tejx_marketplace_db?authSource=admin`
+---
 
-### Initial administrator configuration
+## ⚙️ Environment Variables (`backend/.env`)
 
-Set `ADMIN_USERNAME` and `ADMIN_PASSWORD` in `backend/.env` before starting
-the service. The backend creates this protected root account at startup. When
-either setting is absent, the local-demo fallback is `admin` / `admin`.
+```env
+PORT=8080
+HOST=127.0.0.1
+MONGO_URI=mongodb://127.0.0.1:27017/tejx_marketplace_db
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=admin
+JWT_SECRET=super-secret-jwt-key-for-tejx-marketplace-production
+```
+
+---
+
+## 🔌 API Route Reference
+
+### Authentication & IAM (`/api/auth/*`)
+| Method | Path | Auth Required | Scope | Description |
+|---|---|---|---|---|
+| `POST` | `/api/auth/login` | No | Public | Authenticate credentials and receive JWT |
+| `GET` | `/api/auth/me` | Yes | Any Authenticated | Retrieve current user profile from token |
+| `PUT` | `/api/auth/me` | Yes | Any Authenticated | Update current user profile (name, email) |
+| `POST` | `/api/auth/logout` | Yes | Any Authenticated | Blacklist token and terminate session |
+| `GET` | `/api/auth/users` | Yes | `admin` Only | List registered user directory |
+| `POST` | `/api/auth/users` | Yes | `admin` Only | Create new user account with role archetype |
+| `PUT` | `/api/auth/users/:id` | Yes | `admin` Only | Update user profile, role, or storefront |
+| `DELETE` | `/api/auth/users/:id` | Yes | `admin` Only | Delete user account |
+| `POST` | `/api/auth/users/:id/password` | Yes | `admin` Only | Reset user account password |
+
+### Marketplace & Inventory (`/api/marketplace/*`)
+| Method | Path | Auth Required | Scope | Description |
+|---|---|---|---|---|
+| `GET` | `/api/marketplace/catalog` | No | Public | List products with search & faceted filtering |
+| `GET` | `/api/marketplace/filters` | No | Public | Calculate category, brand, and price bracket facets |
+| `POST` | `/api/marketplace/checkout` | Yes | `customer`, `vendor`, `admin` | Atomic zero-overdraft checkout |
+| `GET` | `/api/marketplace/orders` | Yes | Any Authenticated | List scoped orders (buyer history or storefront) |
+| `GET` | `/api/marketplace/orders/:orderId` | Yes | Order Buyer / Vendor / Admin | View point-in-time order invoice |
+| `GET` | `/api/marketplace/vendor/inventory` | Yes | Storefront Vendor / Admin | View warehouse SKU allocations |
+| `POST` | `/api/marketplace/vendor/inventory/stock` | Yes | Storefront Vendor / Admin | Replenish warehouse stock for SKU |
+| `POST` | `/api/marketplace/products` | Yes | Storefront Vendor / Admin | Create or edit product listing |
+| `DELETE` | `/api/marketplace/products/:id` | Yes | Storefront Vendor / Admin | Remove product listing |
+
+### Analytics & Database (`/api/analytics/*`, `/api/db/*`)
+| Method | Path | Auth Required | Scope | Description |
+|---|---|---|---|---|
+| `GET` | `/api/analytics/realtime` | Yes | Any Authenticated | Compute GMV, tax, commission, and payouts |
+| `GET` | `/api/analytics/top-products` | Yes | Any Authenticated | Rank Top-K revenue-generating products |
+| `POST` | `/api/analytics/tiering/run` | Yes | `admin` Only | Trigger cold data lifecycle archival run |
+| `GET` | `/api/analytics/outbox` | Yes | `admin` Only | Inspect transactional outbox event stream |
+| `GET` | `/api/db/health` | No | Public | Database connection status and telemetry |
+| `POST` | `/api/db/reconnect` | Yes | `admin` Only | Force database reconnection attempt |
