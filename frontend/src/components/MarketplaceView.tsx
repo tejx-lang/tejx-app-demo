@@ -223,7 +223,17 @@ export const MarketplaceView: React.FC<MarketplaceViewProps> = ({
         ]);
       setProducts(catData.products || []);
       setFacets(facetData);
-      setOrders(ordersData.orders || []);
+      const allFetchedOrders = ordersData.orders || [];
+      const userOrders = allFetchedOrders.filter((o) => {
+        if (!currentProfile || currentProfile.role === "guest") return false;
+        const sub = currentProfile.sub?.trim();
+        const email = currentProfile.email?.trim().toLowerCase();
+        if (sub && o.customerId && o.customerId.trim() === sub) return true;
+        if (currentProfile.role === "admin" && (o.customerId === "admin" || o.customerId === "usr-admin-1")) return true;
+        if (email && o.customerEmail && o.customerEmail.trim().toLowerCase() === email) return true;
+        return false;
+      });
+      setOrders(userOrders);
       setStorefronts(storefrontsData);
       if (storefrontsData.length > 0) {
         const initialVnd =

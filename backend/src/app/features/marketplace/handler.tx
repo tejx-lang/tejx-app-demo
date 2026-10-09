@@ -581,24 +581,9 @@ export function handleListOrders(ctx: AppRouteContext): AppHttpResponse {
         return jsonSuccess("Storefront fulfillment orders retrieved", out);
     }
 
-    // Scenario 2: Admin Explicit All Scope Query
-    if (isAdmin(claims) && scope == "all") {
-        for (let i = 0; i < keys.length(); i++) {
-            let invOpt = store.invoices.get(keys[i]);
-            if (invOpt == None) continue;
-            let inv = invOpt as SnapshotInvoice;
-            if (queryCustomerId != "" && inv.customerId != queryCustomerId) {
-                continue;
-            }
-            list.push(inv.toJSON());
-        }
-        let out: JsonObject = objectOf({});
-        out.setArray("orders", list);
-        out.setInt("totalCount", list.length());
-        return jsonSuccess("All platform orders retrieved", out);
-    }
-
-    // Scenario 3: "My Orders" for the logged-in user (NO MATTER WHAT PROFILE, EXCEPT GUEST)
+    // Scenario 2: "My Orders" for the logged-in user (STRICTLY SCOPED TO LOGGED-IN IDENTITY)
+    // No matter whether user is admin, vendor, or customer: "My Orders" shows ONLY orders placed by that user.
+    // Storefront fulfillment orders belong in the Vendor Portal (Scenario 1 via ?vendorId=).
     if (claims.role == "guest") {
         let out: JsonObject = objectOf({});
         out.setArray("orders", []);
@@ -606,9 +591,9 @@ export function handleListOrders(ctx: AppRouteContext): AppHttpResponse {
         return jsonSuccess("Guest session has no order history", out);
     }
 
-    let mySub: string = claims.sub;
-    let myOrigSub: string = claims.originalSub;
-    let myEmail: string = claims.email;
+    let mySub: string = claims.sub.trim();
+    let myOrigSub: string = claims.originalSub.trim();
+    let myEmail: string = claims.email.trim().toLowerCase();
 
     for (let i = 0; i < keys.length(); i++) {
         let invOpt = store.invoices.get(keys[i]);
@@ -616,11 +601,19 @@ export function handleListOrders(ctx: AppRouteContext): AppHttpResponse {
         let inv = invOpt as SnapshotInvoice;
 
         let isMyOrder: bool = false;
-        if (mySub != "" && (inv.customerId == mySub || inv.customerId.indexOf(mySub) >= 0 || mySub.indexOf(inv.customerId) >= 0)) {
+        let orderCustId: string = inv.customerId.trim();
+        let orderCustEmail: string = inv.customerEmail.trim().toLowerCase();
+
+        // Exact match on user ID or original user ID
+        if (mySub != "" && orderCustId != "" && orderCustId == mySub) {
             isMyOrder = true;
-        } else if (myOrigSub != "" && (inv.customerId == myOrigSub || inv.customerId.indexOf(myOrigSub) >= 0 || myOrigSub.indexOf(inv.customerId) >= 0)) {
+        } else if (myOrigSub != "" && orderCustId != "" && orderCustId == myOrigSub) {
             isMyOrder = true;
-        } else if (myEmail != "" && (inv.customerEmail == myEmail || inv.customerEmail.toLowerCase() == myEmail.toLowerCase())) {
+        } else if (claims.role == "admin" && (orderCustId == "admin" || orderCustId == "usr-admin-1")) {
+            // Admin only matches explicit admin buyer orders
+            isMyOrder = true;
+        } else if (myEmail != "" && orderCustEmail != "" && orderCustEmail == myEmail) {
+            // Exact case-insensitive match on customer email
             isMyOrder = true;
         }
 
@@ -650,9 +643,15 @@ export function handleGetOrderDetails(ctx: AppRouteContext): AppHttpResponse {
     let inv = invOpt as SnapshotInvoice;
 
     if (!isAdmin(claims)) {
-        let isOwner: bool = (claims.sub != "" && (inv.customerId == claims.sub || inv.customerId.indexOf(claims.sub) >= 0)) ||
-                            (claims.originalSub != "" && (inv.customerId == claims.originalSub || inv.customerId.indexOf(claims.originalSub) >= 0)) ||
-                            (claims.email != "" && (inv.customerEmail == claims.email || inv.customerEmail.toLowerCase() == claims.email.toLowerCase()));
+        let orderCustId: string = inv.customerId.trim();
+        let orderCustEmail: string = inv.customerEmail.trim().toLowerCase();
+        let mySub: string = claims.sub.trim();
+        let myOrigSub: string = claims.originalSub.trim();
+        let myEmail: string = claims.email.trim().toLowerCase();
+
+        let isOwner: bool = (mySub != "" && orderCustId != "" && orderCustId == mySub) ||
+                            (myOrigSub != "" && orderCustId != "" && orderCustId == myOrigSub) ||
+                            (myEmail != "" && orderCustEmail != "" && orderCustEmail == myEmail);
         if (isOwner) {
             // Buyer is authorized to view their own purchase
         } else if (claims.role == "vendor" && claims.vendorId != "") {
