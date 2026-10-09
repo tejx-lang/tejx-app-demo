@@ -1,9 +1,0 @@
-// Tiny shared response helpers so handlers stay focused on business rules.
-import { JsonObject, objectOf, plainJson } from "../helpers/json.tx";
-import { ServerResponse, createJsonResponse } from "../../modules/server/index.tx";
-
-export function jsonError(message: string, status: int): ServerResponse {
-    let body: JsonObject = objectOf({});
-    body.setString("error", message);
-    return createJsonResponse(plainJson(body), status);
-}

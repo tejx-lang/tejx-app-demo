@@ -1,694 +1,216 @@
-# TejX HTTP + Mongo Demo
+# TejX Enterprise Multi-Vendor E-Commerce & Financial Platform
 
-This repository is a small REST API built in TejX. It shows how to:
+A full-stack, enterprise-grade **Multi-Vendor Marketplace, Real-Time Financial Analytics & Operations Engine** built with:
+1. **`mongo-sdk/`**: Standalone, pure TejX MongoDB wire-protocol package (OP_MSG, full BSON encoder/decoder, SCRAM authentication).
+2. **`backend/`**: High-performance REST API service compiled natively with the TejX compiler into native machine code with zero-overdraft atomic stock reservation and dual-mode persistence.
+3. **`frontend/`**: Ultra-modern React + TypeScript operations dashboard featuring the public Marketplace, Vendor Operations Portal, Financial Analytics Matrix, and Enterprise IAM & Security Center.
 
-- boot an app from a thin `src/main.tx`
-- serve HTTP requests through a reusable `server` module
-- talk to MongoDB directly through a reusable `mongo` module
-- keep app-specific helpers inside `src/app`
-- keep module-internal helpers inside each module folder
+---
 
-The app is a rental-style demo with users, products, orders, events, reports, login, and one outbound HTTP example.
+## 📸 Platform Overview & Visual Tour
 
-## What Is In This Codebase
+### 1. Aura Marketplace Catalog
+Public multi-vendor marketplace featuring faceted category & storefront filters, flash deal discounts, real-time cart calculation, tax estimation, and atomic checkout.
 
-There are two main layers.
+![Marketplace Catalog](images/Marketplace.png)
 
-### 1. Reusable modules
+### 2. Multi-Tenant Vendor Operations Portal
+Dedicated portal for independent vendors to manage storefront listings, multi-location warehouse SKU inventories, stock replenishment, and fulfillment orders.
 
-- `src/modules/server/`
-  A lightweight HTTP server and router. It owns request parsing, route matching, path params, method checks, JSON responses, and route logging.
-- `src/modules/mongo/`
-  A direct MongoDB client implemented over the wire protocol. It owns BSON encoding/decoding, SCRAM auth, and command execution.
+![Vendor Operations Portal](images/VendorPortal.png)
 
-These module folders are self-contained. The app does not leak into them.
+### 3. Real-Time Financial Analytics Matrix
+Executive analytics suite tracking Gross Merchandise Value (GMV), 12% platform revenue cut, 8% statutory tax escrow, net vendor payouts, Top-K revenue products, and automated cold data lifecycle tiering.
 
-### 2. App layer
+![Financial Analytics](images/Analytics.png)
 
-- `src/app/server.tx`
-  Bootstraps config, prefers Mongo, falls back to in-memory mode when Mongo is unavailable, loads app state, initializes the router, and starts listening.
-- `src/app/router/`
-  Connects HTTP routes to feature handlers.
-- `src/app/features/`
-  Business features such as users, products, orders, auth, reports, events, and external fetch.
-- `src/app/core/`
-  Shared app-only helpers for persistence, IDs, response helpers, store updates, and state.
-- `src/app/helpers/json.tx`
-  App-local typed JSON helper used only by app code.
+### 4. Enterprise Identity, Access & Security Management (IAM)
+Administrator-only security center managing user lifecycles, role archetypes (`admin`, `vendor`, `customer`, `guest`), credentials, storefront tenant associations, and audit controls.
 
-## Runtime Model
+![Identity & Access Management](images/UserManagement.png)
 
-At startup the app:
+---
 
-1. Resolves environment/config values.
-2. Tries to open a Mongo connection.
-3. Uses Mongo-backed persistence when the database is reachable, otherwise starts in `memory://local-runtime`.
-4. Loads users, products, orders, and events into one in-memory `AppState`.
-5. Starts the HTTP server and routes all requests through that shared runtime state.
-
-When Mongo is available, writes update:
-
-- the in-memory state
-- MongoDB
-- the event log
-
-When Mongo is not available, writes stay in memory for that process lifetime and still append to the in-memory event log.
-
-## Project Layout
+## 🏗️ Architecture & Directory Layout
 
 ```text
-.
-├── build.sh
-├── examples/
-│   ├── clients/
-│   │   └── internal_client.tx
-│   └── probes/
-│       ├── https_probe.tx
-│       ├── json_probe.tx
-│       ├── mongo_probe.tx
-│       └── verify_net.tx
-├── src/
-│   ├── main.tx
-│   ├── app/
-│   │   ├── config/
-│   │   │   └── env.tx
-│   │   ├── core/
-│   │   ├── features/
-│   │   │   ├── auth/
-│   │   │   ├── events/
-│   │   │   ├── external/
-│   │   │   ├── orders/
-│   │   │   ├── products/
-│   │   │   ├── reports/
-│   │   │   ├── search/
-│   │   │   └── users/
-│   │   ├── helpers/
-│   │   │   └── json.tx
-│   │   ├── router/
-│   │   ├── runtime/
-│   │   └── server.tx
-│   └── modules/
-│       ├── mongo/
-│       └── server/
+tejx-demo/
+├── images/                        # Platform UI screenshots & architecture diagrams
+│   ├── Marketplace.png            # Aura Marketplace catalog & cart view
+│   ├── VendorPortal.png           # Vendor inventory & SKU warehouse operations
+│   ├── Analytics.png              # Real-time financial analytics matrix
+│   └── UserManagement.png         # Enterprise IAM & Security Center
+│
+├── mongo-sdk/                     # Standalone pure TejX MongoDB Driver Package
+│   ├── src/
+│   │   ├── index.tx               # Public driver exports (MongoClient, MongoDatabase)
+│   │   ├── client.tx              # OP_MSG wire protocol client
+│   │   ├── bson.tx                # Full BSON serializer and deserializer
+│   │   ├── auth.tx                # SCRAM-SHA-256 and SCRAM-SHA-1 authentication
+│   │   ├── config.tx              # Mongo URI & configuration parser
+│   │   └── json.tx                # Typed BSON-to-JSON bridge
+│   ├── tests/
+│   │   ├── test_bson.tx           # BSON encoder/decoder verification
+│   │   └── test_client.tx         # Client handshake test
+│   └── README.md
+│
+├── backend/                       # Native TejX REST Backend Engine
+│   ├── src/
+│   │   ├── main.tx                # Server entry point & startup probe
+│   │   ├── server/                # HTTP server, routing engine, CORS preflight
+│   │   └── app/                   # Core state, domain models, feature handlers
+│   │       ├── core/              # Dual persistence probe, MongoDB bridge, security
+│   │       ├── router/            # Route dispatch & parameter extraction
+│   │       └── features/
+│   │           ├── auth/          # Cryptographic JWT, RBAC, session blacklist, IAM
+│   │           ├── marketplace/   # Catalog, cart, checkout, inventory, orders
+│   │           ├── analytics/     # Financial ledger, GMV, Top-K, data tiering
+│   │           └── database/      # Database telemetry & connection diagnostics
+│   ├── build.sh                   # Native Mach-O compilation script
+│   └── README.md
+│
+├── frontend/                      # React Frontend Application (Vite + React + TS)
+│   ├── src/
+│   │   ├── components/            # Marketplace, VendorPortal, Analytics, Security
+│   │   ├── services/api.ts        # Typed HTTP client & JWT session management
+│   │   ├── styles/index.css       # Clean, modern design system
+│   │   ├── App.tsx                # Main application coordinator & view router
+│   │   └── main.tsx
+│   ├── vite.config.js             # Dev server & reverse proxy configuration
+│   └── README.md
+│
+├── start.sh                       # Unified single-command launcher
+├── package.json                   # Root workspace management
 └── README.md
 ```
 
-## Important Entry Points
+---
 
-- `src/main.tx`
-  Process entrypoint. It only calls `runApplication()`.
-- `src/app/server.tx`
-  Main bootstrap flow.
-- `src/app/router/index.tx`
-  Full route registration.
-- `src/app/router/handlers.tx`
-  Bridges route contexts into feature handlers.
-- `src/modules/server/index.tx`
-  HTTP server, router, route params, JSON response helpers, and logging.
-- `src/modules/mongo/index.tx`
-  Public Mongo module surface.
+## 🏛️ Key Platform Modules
 
-## Build And Run
+### 1. Aura Marketplace (`/marketplace`)
+- **Public Catalog Browsing**: Open to everyone (guests and authenticated users).
+- **Faceted Search Pipeline**: Real-time aggregation across categories, price brackets, and brands.
+- **Atomic Zero-Overdraft Checkout**: Pre-flight validation guarantees variant stock never dips below zero; rejects concurrent overdrafts with `409 Conflict`.
+- **API Idempotency Layer**: `X-Idempotency-Key` prevents duplicate charges and double order deductions on accidental retries.
+- **Point-in-Time Invoice Snapshots**: Historical order records snapshot pricing, taxes, and vendor cuts at purchase time.
+- **Strict User Order Scoping**: Marketplace "My Orders" displays orders belonging strictly to the signed-in user (`customerId == claims.sub || customerEmail == claims.email`), keeping personal purchases completely separate from storefront sales.
 
-Prerequisites:
+### 2. Vendor Operations Portal (`/vendor`)
+- **Storefront Isolation**: Independent vendors can only manage products, inventories, and fulfillment records for their assigned storefront (`vendorId`).
+- **Multi-Location Warehouse Inventory**: SKU tracking across primary, regional, and reserve warehouses.
+- **Quick Restock & Full Product Editor**: In-place SKU restock actions and rich multi-variant configuration updates.
 
-- `tejxc` available on `PATH`, or installed at `~/.tejx/bin/tejxc`
-- MongoDB reachable locally or via a URI if you want persistent storage
+### 3. Financial & Real-Time Analytics Matrix (`/analytics`)
+- **Financial Metric Breakdown**: Instant computation of GMV, 12% platform revenue cut, 8% sales tax escrow, and net vendor payouts.
+- **Top-K Revenue Leaders**: Ranked product analysis by unit sales and gross revenue.
+- **Data Lifecycle Tiering**: Automated archival of historical transactions to cold BSON storage.
+- **DevOps Telemetry**: Outbox event stream inspector, token-bucket rate limiter metrics, and stress-testing harness.
 
-Build the server:
+### 4. Identity, Access & Security Management (IAM) (`/security`)
+- **Strict RBAC Enforcement**:
+  - `admin`: Full platform control, user directory CRUD, financial ledger, and database tools.
+  - `vendor`: Storefront catalog management, SKU restocking, and fulfillment orders.
+  - `customer`: Public browsing, cart checkout, and personal order history.
+  - `guest`: Read-only catalog browsing.
+- **Cryptographic JWT Sessions**: Stateless token verification extracting authenticated claims (`sub`, `role`, `vendorId`, `email`).
+- **Token Blacklisting**: Immediate logout revocation using an in-memory and persistent blacklist cache.
+- **Zero Hardcoded Backdoors**: Strict credential validation without mock fallbacks or demo bypasses.
+
+---
+
+## 🍃 Dual-Engine Persistence Architecture
+
+The platform features an enterprise dual-persistence engine:
+
+1. **MongoDB Live Mode** (`mongodb://127.0.0.1:27017`):
+   - Communicates via `mongo-sdk` using pure BSON wire-protocol (OP_MSG).
+   - Persists all collections (`users`, `marketplace_products`, `marketplace_orders`, `storefronts`, `outbox_events`).
+   - The top navigation displays a green **`MongoDB Live`** indicator.
+
+2. **Resilient In-Memory Fallback Mode** (`memory://local-runtime`):
+   - If MongoDB is offline or disconnected, the backend seamlessly falls back to high-speed in-memory state.
+   - All mutations, checkouts, and inventory updates continue serving without server crashes or 500 errors.
+   - The top navigation displays an amber **`In-Memory`** status indicator.
+
+---
+
+## 🚀 Quick Start
+
+### 1. Launch All Services (Single Command)
 
 ```bash
-./build.sh
+cd tejx-demo
+./start.sh
 ```
 
-Run the server:
+This single command will:
+1. Load environment variables from `backend/.env` and `frontend/.env`.
+2. Compile the native TejX backend binary with `backend/build.sh`.
+3. Launch the native TejX backend on `http://127.0.0.1:8080`.
+4. Launch the React frontend on `http://localhost:3000`.
+
+### 2. Manual Commands
 
 ```bash
-./build/server
+# Build the native backend binary
+bash backend/build.sh
+
+# Run the backend standalone
+./backend/build/server
+
+# Test the Mongo SDK wire protocol driver
+npm run test:sdk
+
+# Run the React frontend in development mode
+npm run start:frontend
 ```
 
-If MongoDB is not reachable, the app now still starts and serves the full demo API in memory mode. `GET /health` will then report `"storage": "memory://local-runtime"`.
+---
 
-## Configuration
+## ⚙️ Environment Configuration
 
-Preferred Mongo setup is a single URI:
+### Backend (`backend/.env`)
 
-```bash
-export MONGO_URL='mongodb://root:password123@localhost:27017/demo?replicaSet=rs0&authSource=admin'
+```env
+PORT=8080
+HOST=127.0.0.1
+MONGO_URI=mongodb://127.0.0.1:27017/tejx_marketplace_db
+# Initial root administrator provisioned at startup
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=admin
+JWT_SECRET=super-secret-jwt-key-for-tejx-marketplace-production
 ```
 
-Supported environment variables:
+### Frontend (`frontend/.env`)
 
-| Variable                                  | Purpose                                  | Default                   |
-| ----------------------------------------- | ---------------------------------------- | ------------------------- |
-| `PORT`                                    | HTTP listen port                         | `3000`                    |
-| `APP_BASE_URL`                            | Public base URL used for startup display | `http://127.0.0.1:<PORT>` |
-| `MONGO_URL` / `MONGO_URI` / `MONGODB_URI` | Full Mongo connection string             | unset                     |
-| `MONGO_HOST`                              | Mongo host when not using a URI          | `127.0.0.1`               |
-| `MONGO_PORT`                              | Mongo port when not using a URI          | `27017`                   |
-| `MONGO_DATABASE`                          | Logical database name                    | `demo`                    |
-| `MONGO_USERNAME` / `MONGO_USER`           | Mongo username                           | `root`                    |
-| `MONGO_PASSWORD`                          | Mongo password                           | `password123`             |
-| `MONGO_AUTH_SOURCE`                       | Auth database                            | `admin`                   |
-| `MONGO_REPLICA_SET`                       | Replica set name                         | `rs0`                     |
-
-## HTTP And Data Conventions
-
-- All API responses are JSON.
-- Item timestamps such as `createdAt` are epoch milliseconds.
-- Generated IDs use a prefix-based format such as `user-<timestamp>-<n>`.
-- Collection endpoints return a normalized shape:
-
-```json
-{
-  "count": 2,
-  "ids": ["user-1", "user-2"],
-  "items": {
-    "user-1": { "...": "..." },
-    "user-2": { "...": "..." }
-  }
-}
+```env
+VITE_PORT=3000
+VITE_BACKEND_URL=http://127.0.0.1:8080
+VITE_APP_TITLE=Aura Marketplace | Multi-Vendor E-Commerce & Financial Platform
 ```
 
-- Most app-level errors return:
-
-```json
-{
-  "error": "message"
-}
-```
-
-- Router-level method mismatches return:
-
-```json
-{
-  "error": "Method not allowed",
-  "allowed": ["GET", "POST"]
-}
-```
-
-- Route misses return:
-
-```json
-{
-  "error": "Route not found"
-}
-```
-
-## API Reference
-
-### Root And Diagnostics
-
-#### `GET /`
-
-Returns a welcome document with the top-level API list.
-
-Response shape:
-
-```json
-{
-  "message": "Welcome to TejX REST API",
-  "version": "1.0.0",
-  "endpoints": [
-    "/health",
-    "/api/auth/login",
-    "/api/users",
-    "/api/products",
-    "/api/orders",
-    "/api/reports/summary",
-    "/api/events",
-    "/api/external"
-  ]
-}
-```
-
-#### `GET /health`
-
-Returns a lightweight liveness document.
-
-Response shape:
-
-```json
-{
-  "status": "ok",
-  "service": "tejx-http-mongo-demo",
-  "storage": "mongodb://root:***@127.0.0.1:27017/demo?authSource=admin&replicaSet=rs0",
-  "counts": {
-    "users": 0,
-    "products": 0,
-    "orders": 0,
-    "events": 0
-  }
-}
-```
-
-#### `GET /api/reports/summary`
-
-Returns a live summary of the loaded app state.
-
-Response shape:
-
-```json
-{
-  "summary": {
-    "users": 0,
-    "products": 0,
-    "orders": 0,
-    "events": 0,
-    "revenue": 0.0,
-    "lowStock": {
-      "count": 0,
-      "ids": [],
-      "items": {}
-    }
-  },
-  "storage": "mongodb://root:***@127.0.0.1:27017/demo?authSource=admin&replicaSet=rs0"
-}
-```
-
-#### `GET /api/search?q=<text>`
-
-Performs a simple in-memory substring search across users, products, orders, and events.
-
-Response:
-
-```json
-{
-  "query": "alice",
-  "count": 1,
-  "users": {
-    "count": 1,
-    "ids": ["user-..."],
-    "items": {
-      "user-...": {
-        "id": "user-...",
-        "name": "Alice",
-        "email": "alice@example.com",
-        "role": "customer",
-        "createdAt": 0
-      }
-    }
-  },
-  "products": {
-    "count": 0,
-    "ids": [],
-    "items": {}
-  },
-  "orders": {
-    "count": 0,
-    "ids": [],
-    "items": {}
-  },
-  "events": {
-    "count": 0,
-    "ids": [],
-    "items": {}
-  }
-}
-```
-
-Status: `200`
-
-#### `GET /api/external`
-
-Fetches `https://dummyjson.com/products/1` with built-in `fetchSync(...)` and returns the upstream JSON body.
-
-If the upstream call fails, the endpoint still returns a demo fallback payload:
-
-```json
-{
-  "id": 1,
-  "title": "Fallback Demo Product",
-  "description": "Static fallback returned because the upstream request failed",
-  "price": 99.99,
-  "category": "demo",
-  "source": "fallback",
-  "upstreamAvailable": false,
-  "upstreamError": "..."
-}
-```
-
-### Auth
-
-#### `POST /api/auth/login`
-
-Validates a user by matching the in-memory user collection on `email` and `password`.
-
-Request body:
-
-```json
-{
-  "email": "alice@example.com",
-  "password": "secret"
-}
-```
-
-Success response:
-
-```json
-{
-  "token": "token-user-...-...",
-  "user": {
-    "id": "user-...",
-    "name": "Alice",
-    "email": "alice@example.com",
-    "role": "customer",
-    "createdAt": 0
-  }
-}
-```
-
-Common failures:
-
-- `400` if the body is missing or invalid JSON
-- `400` if `email` or `password` is empty
-- `401` for invalid credentials
-
-### Users
-
-#### `GET /api/users`
-
-Returns all users as a collection view.
-
-User item shape:
-
-```json
-{
-  "id": "user-...",
-  "name": "Alice",
-  "email": "alice@example.com",
-  "role": "customer",
-  "createdAt": 0
-}
-```
-
-#### `POST /api/users`
-
-Creates a user and records an event.
-
-Request body:
-
-```json
-{
-  "name": "Alice",
-  "email": "alice@example.com",
-  "password": "secret",
-  "role": "customer"
-}
-```
-
-Notes:
-
-- `role` defaults to `customer`
-- response does not include the password
-
-Common failures:
-
-- `400` if `name`, `email`, or `password` is missing
-- `400` for invalid JSON
-- `409` if the email already exists
-
-#### `GET /api/users/:userId`
-
-Returns one user view.
-
-#### `PUT /api/users/:userId`
-
-Updates any provided user fields.
-
-Allowed body fields:
-
-```json
-{
-  "name": "Alice Updated",
-  "email": "alice.updated@example.com",
-  "role": "admin",
-  "password": "new-secret"
-}
-```
-
-Common failures:
-
-- `404` if the user does not exist
-- `409` if the new email already belongs to another user
-- `400` for invalid JSON
-
-#### `DELETE /api/users/:userId`
-
-Deletes a user and records an event.
-
-Response:
-
-```json
-{
-  "deleted": true,
-  "id": "user-..."
-}
-```
-
-Constraint:
-
-- returns `409` if the user still owns orders
-
-### Products
-
-#### `GET /api/products`
-
-Returns all products as a collection view.
-
-Product item shape:
-
-```json
-{
-  "id": "product-...",
-  "name": "Keyboard",
-  "price": 1299.0,
-  "stock": 5,
-  "category": "accessories",
-  "createdAt": 0
-}
-```
-
-#### `POST /api/products`
-
-Creates a product and records an event.
-
-Request body:
-
-```json
-{
-  "name": "Keyboard",
-  "price": 1299.0,
-  "stock": 5,
-  "category": "accessories"
-}
-```
-
-Notes:
-
-- `category` defaults to `misc`
-- `stock` defaults to `0`
-
-Common failures:
-
-- `400` if `name` or `price` is missing
-- `400` for invalid JSON
-
-#### `GET /api/products/:productId`
-
-Returns one product view.
-
-#### `PUT /api/products/:productId`
-
-Updates any provided product fields.
-
-Allowed body fields:
-
-```json
-{
-  "name": "Keyboard Pro",
-  "price": 1499.0,
-  "stock": 3,
-  "category": "accessories"
-}
-```
-
-#### `DELETE /api/products/:productId`
-
-Deletes a product and records an event.
-
-Response:
-
-```json
-{
-  "deleted": true,
-  "id": "product-..."
-}
-```
-
-Constraint:
-
-- returns `409` if the product already appears in an order
-
-### Orders
-
-#### `GET /api/orders`
-
-Returns all orders as a collection view.
-
-Order item shape:
-
-```json
-{
-  "id": "order-...",
-  "userId": "user-...",
-  "productIds": ["product-1", "product-2"],
-  "total": 2598.0,
-  "status": "pending",
-  "createdAt": 0
-}
-```
-
-#### `POST /api/orders`
-
-Creates an order and records an event.
-
-Request body:
-
-```json
-{
-  "userId": "user-...",
-  "productIds": ["product-1", "product-2"],
-  "status": "pending"
-}
-```
-
-Notes:
-
-- `status` defaults to `pending`
-- `total` is calculated from the referenced product prices
-
-Common failures:
-
-- `400` if `userId` or `productIds` is missing
-- `404` if the user does not exist
-- `404` if any product ID does not exist
-- `400` for invalid JSON
-
-#### `GET /api/orders/:orderId`
-
-Returns one order view.
-
-#### `PUT /api/orders/:orderId`
-
-Only updates the order status.
-
-Request body:
-
-```json
-{
-  "status": "paid"
-}
-```
-
-Common failures:
-
-- `400` if `status` is missing or empty
-- `400` for invalid JSON
-- `404` if the order does not exist
-
-#### `DELETE /api/orders/:orderId`
-
-Deletes an order and records an event.
-
-Response:
-
-```json
-{
-  "deleted": true,
-  "id": "order-..."
-}
-```
-
-### Events
-
-#### `GET /api/events`
-
-Read-only audit trail of app mutations.
-
-Event item shape:
-
-```json
-{
-  "id": "event-...",
-  "action": "created",
-  "entity": "user",
-  "entityId": "user-...",
-  "createdAt": 0
-}
-```
-
-Events are appended automatically for:
-
-- user create, update, delete
-- product create, update, delete
-- order create, update, delete
-
-### Common Status Codes
-
-- `200` successful read or update
-- `201` resource created
-- `400` invalid JSON or missing required fields
-- `401` invalid login
-- `404` resource or route not found
-- `405` method not allowed
-- `409` business rule conflict
-- `500` unexpected internal failure
-
-## Module Notes
-
-### `server` module
-
-`src/modules/server/index.tx` provides:
-
-- raw HTTP request parsing
-- `ServerRequest` and `ServerResponse`
-- JSON/text response helpers
-- route tree matching with path params
-- method-aware routing with `405` handling
-- request logging
-
-### `mongo` module
-
-`src/modules/mongo/index.tx` is the public Mongo entrypoint.
-
-Internally it owns:
-
-- connection string parsing and config mapping
-- BSON encoding and decoding
-- SCRAM-SHA-256 authentication
-- OP_MSG command framing
-- direct socket-based Mongo communication
-
-The Mongo module returns plain values across its public boundary. App-specific JSON wrapping stays in `src/app`.
-
-## Built-In HTTP Client
-
-Outbound HTTP calls use the language runtime directly through built-in `fetchSync(...)` or `fetch(...)`.
-
-Example:
-
-```tx
-let response = fetchSync("https://dummyjson.com/products/1", {
-    timeoutMs: 10000
-});
-```
-
-There is no custom HTTP client module in this app anymore.
-
-## Notes
-
-- The app is Mongo-only. Old file-backed storage is removed.
-- `GET /health` is a shallow liveness and cache summary endpoint.
-- `GET /api/search` searches the currently loaded in-memory state.
-- `build.sh` auto-detects the sibling `../tejx-lang` toolchain when it exists.
+---
+
+## 🔌 Core API Endpoints
+
+| Method | Path | Access Scope | Description |
+|---|---|---|---|
+| `POST` | `/api/auth/login` | Public | Authenticates credentials and returns signed JWT |
+| `GET` | `/api/auth/me` | Authenticated | Retrieves current authenticated profile from JWT |
+| `POST` | `/api/auth/logout` | Authenticated | Revokes active token and adds to blacklist |
+| `GET` | `/api/auth/users` | Admin Only | Lists all registered user accounts |
+| `POST` | `/api/auth/users` | Admin Only | Provisions a new user account with role & tenant |
+| `PUT` | `/api/auth/users/:id` | Admin Only | Updates user details, email, or role archetype |
+| `DELETE` | `/api/auth/users/:id` | Admin Only | Deletes a user account |
+| `GET` | `/api/marketplace/catalog` | Public | Fetches products with faceted filtering |
+| `POST` | `/api/marketplace/checkout` | Authenticated | Executes atomic zero-overdraft checkout |
+| `GET` | `/api/marketplace/orders` | Authenticated | Retrieves scoped order history (personal or vendor) |
+| `GET` | `/api/marketplace/orders/:id` | Authenticated | Fetches immutable point-in-time order snapshot |
+| `GET` | `/api/marketplace/vendor/inventory` | Vendor / Admin | Retrieves warehouse SKU allocations |
+| `POST` | `/api/marketplace/vendor/inventory/stock` | Vendor / Admin | Replenishes warehouse stock for a SKU |
+| `POST` | `/api/marketplace/products` | Vendor / Admin | Creates or updates product specifications |
+| `GET` | `/api/analytics/realtime` | Authenticated | Computes GMV, platform fees, taxes, and vendor payout |
+| `GET` | `/api/analytics/top-products` | Authenticated | Returns Top-K revenue-generating products |
+| `POST` | `/api/analytics/tiering/run` | Admin Only | Triggers automated data lifecycle archival run |
+| `GET` | `/api/db/health` | Public | Inspects database connection status and telemetry |

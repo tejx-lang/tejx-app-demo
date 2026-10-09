@@ -1,0 +1,238 @@
+// App-local typed JSON helper
+import std:json;
+
+function stringValue(value: any, fallback: string = ""): string {
+    if (value == None) {
+        return fallback;
+    }
+    return String(value);
+}
+
+function intValue(value: any, fallback: int = 0): int {
+    if (value == None) {
+        return fallback;
+    }
+    let kind: string = typeof(value);
+    if (kind == "int" || kind == "int32" || kind == "int64") {
+        return value as int;
+    }
+    if (kind == "float" || kind == "float32" || kind == "float64") {
+        return (value as float) as int;
+    }
+    if (kind == "bool") {
+        return (value as bool) ? 1 : 0;
+    }
+    return Number.Int(value);
+}
+
+function int64Value(value: any, fallback: int64 = 0): int64 {
+    if (value == None) {
+        return fallback;
+    }
+    let kind: string = typeof(value);
+    if (kind == "int64" || kind == "int" || kind == "int32") {
+        return value as int64;
+    }
+    if (kind == "float" || kind == "float32" || kind == "float64") {
+        return (value as float) as int64;
+    }
+    if (kind == "Date" || kind == "object" || kind == "struct") {
+        let m: any = value["millis"];
+        if (m == None) m = value["value"];
+        if (m == None) m = value["timestamp"];
+        if (m != None) {
+            let mt: string = typeof(m);
+            if (mt == "int" || mt == "int32" || mt == "int64") {
+                return m as int64;
+            }
+            if (mt == "float" || mt == "float32" || mt == "float64") {
+                return (m as float) as int64;
+            }
+            return int64Value(m, fallback);
+        }
+        if (value["$date"] != None) {
+            return int64Value(value["$date"], fallback);
+        }
+        if (typeof(value["getTime"]) == "function") {
+            return value.getTime() as int64;
+        }
+    }
+    return value as int64;
+}
+
+function floatValue(value: any, fallback: float = 0.0): float {
+    if (value == None) {
+        return fallback;
+    }
+    let kind: string = typeof(value);
+    if (kind == "float" || kind == "float32" || kind == "float64") {
+        return value as float;
+    }
+    if (kind == "int" || kind == "int32" || kind == "int64") {
+        return (value as int64) as float;
+    }
+    return Number.Float(value);
+}
+
+function normalizeObjectValue(value: any): any {
+    if (value == None) {
+        return {};
+    }
+    if (typeof(value["toJSON"]) == "function") {
+        return value.toJSON();
+    }
+    return value;
+}
+
+export class JsonObject {
+    values: any;
+
+    constructor(values: any) {
+        this.values = normalizeObjectValue(values);
+    }
+
+    has(key: string): bool {
+        return this.values[key] != None;
+    }
+
+    string(key: string): string {
+        return stringValue(this.values[key], "");
+    }
+
+    int(key: string): int {
+        return intValue(this.values[key], 0);
+    }
+
+    int64(key: string): int64 {
+        return int64Value(this.values[key], 0);
+    }
+
+    float(key: string): float {
+        return floatValue(this.values[key], 0.0);
+    }
+
+    bool(key: string): bool {
+        let val: any = this.values[key];
+        if (val == None) return false;
+        return val as bool;
+    }
+
+    object(key: string): Optional<JsonObject> {
+        let normalized: any = normalizeObjectValue(this.values[key]);
+        if (normalized == None) {
+            return None;
+        }
+        let t: string = typeof(normalized);
+        if (t != "object" && t != "struct") {
+            return None;
+        }
+        return new JsonObject(normalized);
+    }
+
+    objectArray(key: string): JsonObject[] {
+        let raw: any = this.values[key];
+        if (raw == None || typeof(raw) != "array") return [];
+        let out: JsonObject[] = [];
+        for (let i: int = 0; i < raw.length(); i++) {
+            out.push(new JsonObject(normalizeObjectValue(raw[i])));
+        }
+        return out;
+    }
+
+    stringArray(key: string): string[] {
+        let raw: any = this.values[key];
+        if (raw == None || typeof(raw) != "array") return [];
+        let out: string[] = [];
+        for (let i: int = 0; i < raw.length(); i++) {
+            out.push(stringValue(raw[i]));
+        }
+        return out;
+    }
+
+    setString(key: string, value: string): void {
+        this.values[key] = value;
+    }
+
+    setInt(key: string, value: int): void {
+        this.values[key] = value;
+    }
+
+    setInt64(key: string, value: int64): void {
+        this.values[key] = value;
+    }
+
+    setDate(key: string, value: any): void {
+        if (value == None) {
+            this.values[key] = None;
+            return;
+        }
+        let kind: string = typeof(value);
+        if (kind == "int" || kind == "int32" || kind == "int64") {
+            let millis: int64 = value as int64;
+            let dateObj: JsonObject = new JsonObject({});
+            dateObj.setString("_bsonType", "date");
+            dateObj.setInt64("millis", millis);
+            this.values[key] = dateObj.toJSON();
+            return;
+        }
+        if (kind == "Date" || kind == "object" || kind == "struct") {
+            if (value["_bsonType"] == "date" || value["_bsonType"] == "datetime") {
+                this.values[key] = normalizeObjectValue(value);
+                return;
+            }
+            if (value["$date"] != None) {
+                this.values[key] = normalizeObjectValue(value);
+                return;
+            }
+            if (typeof(value["getTime"]) == "function") {
+                let millis: int64 = value.getTime() as int64;
+                let dateObj: JsonObject = new JsonObject({});
+                dateObj.setString("_bsonType", "date");
+                dateObj.setInt64("millis", millis);
+                this.values[key] = dateObj.toJSON();
+                return;
+            }
+        }
+        this.values[key] = value;
+    }
+
+    date(key: string): int64 {
+        return this.int64(key);
+    }
+
+    setFloat(key: string, value: float): void {
+        this.values[key] = value;
+    }
+
+    setBool(key: string, value: bool): void {
+        this.values[key] = value;
+    }
+
+    setObject(key: string, value: any): void {
+        this.values[key] = normalizeObjectValue(value);
+    }
+
+    setArray(key: string, values: any[]): void {
+        this.values[key] = values;
+    }
+
+    setStringArray(key: string, values: string[]): void {
+        this.values[key] = values;
+    }
+
+    toJSON(): any {
+        return this.values;
+    }
+}
+
+export function objectOf(value: any): JsonObject {
+    return new JsonObject(normalizeObjectValue(value));
+}
+
+export function plainJson(obj: JsonObject): string {
+    return json.stringify(obj.toJSON());
+}
+
+export function parseJson(raw: string): any {
+    return json.parse(raw);
+}

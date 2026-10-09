@@ -1,0 +1,149 @@
+// Store and persistence coordinator with real MongoDB collection integration
+import { now } from "std:time";
+import { MongoDatabase } from "../../../../mongo-sdk/src/index.tx";
+import { MongoJsonObject, objectOf } from "../../../../mongo-sdk/src/json.tx";
+import { AppState, getAppState } from "./state.tx";
+import { nextEntityId } from "./ids.tx";
+import { AppUser } from "../features/users/model.tx";
+import { AppProduct } from "../features/products/model.tx";
+import { AppOrder } from "../features/orders/model.tx";
+import { AppEvent } from "../features/events/model.tx";
+
+export function recordAppEvent(action: string, entity: string, entityId: string): void {
+    let state: AppState = getAppState();
+    let eventId: string = nextEntityId("ev", state.events.ids);
+    let event: AppEvent = new AppEvent(eventId, action, entity, entityId, now());
+    state.events.add(eventId, event);
+
+    if (state.client != None) {
+        try {
+            let db: MongoDatabase = state.client as MongoDatabase;
+            let doc: MongoJsonObject = new MongoJsonObject({});
+            doc.setString("id", event.id);
+            doc.setString("action", event.action);
+            doc.setString("entity", event.entity);
+            doc.setString("entityId", event.entityId);
+            doc.setDate("timestamp", event.timestamp);
+            db.insertOne("events", doc);
+        } catch (e) {
+            // Keep going if write fails
+        }
+    }
+}
+
+export function persistUser(user: AppUser): void {
+    let state: AppState = getAppState();
+    if (state.client != None) {
+        try {
+            let db: MongoDatabase = state.client as MongoDatabase;
+            let doc: MongoJsonObject = new MongoJsonObject({});
+            doc.setString("id", user.id);
+            doc.setString("name", user.name);
+            doc.setString("email", user.email);
+            doc.setString("role", user.role);
+            doc.setDate("createdAt", user.createdAt);
+            db.insertOne("users", doc);
+        } catch (e) {
+            print("[mongo-err] Failed to persist user to MongoDB: " + String(e));
+        }
+    }
+}
+
+export function deleteUserFromDb(id: string): void {
+    let state: AppState = getAppState();
+    if (state.client != None) {
+        try {
+            let db: MongoDatabase = state.client as MongoDatabase;
+            let filter: MongoJsonObject = new MongoJsonObject({});
+            filter.setString("id", id);
+            db.deleteOne("users", filter);
+        } catch (e) {
+            print("[mongo-err] Failed to delete user from MongoDB: " + String(e));
+        }
+    }
+}
+
+export function persistProduct(prod: AppProduct): void {
+    let state: AppState = getAppState();
+    if (state.client != None) {
+        try {
+            let db: MongoDatabase = state.client as MongoDatabase;
+            let doc: MongoJsonObject = new MongoJsonObject({});
+            doc.setString("id", prod.id);
+            doc.setString("name", prod.name);
+            doc.setFloat("price", prod.price);
+            doc.setString("category", prod.category);
+            doc.setInt("stock", prod.stock);
+            doc.setDate("createdAt", prod.createdAt);
+            db.insertOne("products", doc);
+        } catch (e) {
+            print("[mongo-err] Failed to persist product to MongoDB: " + String(e));
+        }
+    }
+}
+
+export function deleteProductFromDb(id: string): void {
+    let state: AppState = getAppState();
+    if (state.client != None) {
+        try {
+            let db: MongoDatabase = state.client as MongoDatabase;
+            let filter: MongoJsonObject = new MongoJsonObject({});
+            filter.setString("id", id);
+            db.deleteOne("products", filter);
+        } catch (e) {
+            print("[mongo-err] Failed to delete product from MongoDB: " + String(e));
+        }
+    }
+}
+
+export function seedInitialData(state: AppState): void {
+    // Database starts completely clean; all records are derived from MongoDB.
+    recordAppEvent("system_boot", "System", "core-init");
+}
+
+export function loadAppStateFromMongoOrSeed(client: Optional<MongoDatabase>): AppState {
+    let state: AppState = new AppState(client);
+
+    if (client != None) {
+        try {
+            let db: MongoDatabase = client as MongoDatabase;
+
+            // Load persisted users
+            let existingUsers = db.find("users", new MongoJsonObject({}));
+            for (let i = 0; i < existingUsers.length(); i++) {
+                let d = existingUsers[i];
+                let u = new AppUser(
+                    d.string("id"),
+                    d.string("name"),
+                    d.string("email"),
+                    d.string("role"),
+                    d.int64("createdAt")
+                );
+                state.users.add(u.id, u);
+            }
+
+            // Load persisted products
+            let existingProds = db.find("products", new MongoJsonObject({}));
+            for (let i = 0; i < existingProds.length(); i++) {
+                let d = existingProds[i];
+                let p = new AppProduct(
+                    d.string("id"),
+                    d.string("name"),
+                    d.float("price"),
+                    d.string("category"),
+                    d.int("stock"),
+                    d.int64("createdAt")
+                );
+                state.products.add(p.id, p);
+            }
+
+            recordAppEvent("mongo_hydrated", "Database", "loaded_collections");
+            return state;
+        } catch (e) {
+            print("[warn] MongoDB read failed: " + String(e));
+        }
+    }
+
+    seedInitialData(state);
+    return state;
+}

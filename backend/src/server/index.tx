@@ -1,0 +1,522 @@
+// TejX Production HTTP Server & Router with CORS support
+import std:net;
+import std:thread;
+import std:binary;
+import { stringify } from "std:json";
+import { now } from "std:time";
+import { Map } from "std:collections";
+
+function stableText(text: string): string {
+    return binary.toString(binary.fromString(text));
+}
+
+function stableCopy(value: string): string {
+    return stableText(value);
+}
+
+export function colorText(text: string, colorCode: string): string {
+    return text;
+}
+
+export function colorLabel(text: string, colorCode: string): string {
+    return "[" + text + "]";
+}
+
+export function dimText(text: string): string {
+    return text;
+}
+
+function parseHeaderLines(lines: string[], startIndex: int): Map<string, string> {
+    let headers: Map<string, string> = new Map<string, string>();
+    for (let i: int = startIndex; i < lines.length(); i++) {
+        let line: string = lines[i];
+        if (line == "") {
+            continue;
+        }
+        let colonIndex: int = line.indexOf(":");
+        if (colonIndex > 0) {
+            let key: string = stableText(line.substring(0, colonIndex)).trim().toLowerCase();
+            let value: string = stableText(line.substring(colonIndex + 1, line.length())).trim();
+            headers.set(key, value);
+        }
+    }
+    return headers;
+}
+
+function headerValue(headers: Map<string, string>, name: string): string {
+    let key: string = stableText(name).toLowerCase();
+    let val: Optional<string> = headers.get(key);
+    if (val == None) {
+        return "";
+    }
+    return val as string;
+}
+
+function simpleUrlDecode(val: string): string {
+    let out: string = val.replace("+", " ");
+    out = out.replace("%20", " ");
+    return out;
+}
+
+function parseQueryValue(query: string, name: string): string {
+    if (query == "") {
+        return "";
+    }
+    let pairs: string[] = query.split("&");
+    for (let i: int = 0; i < pairs.length(); i++) {
+        let pair: string = pairs[i];
+        let eq: int = pair.indexOf("=");
+        if (eq > 0) {
+            let key: string = pair.substring(0, eq);
+            if (key == name) {
+                return simpleUrlDecode(pair.substring(eq + 1, pair.length()));
+            }
+        }
+    }
+    return "";
+}
+
+export class AppHttpRequest {
+    method: string;
+    rawPath: string;
+    path: string;
+    query: string;
+    httpVersion: string;
+    headers: Map<string, string>;
+    body: string;
+
+    constructor(raw: string) {
+        this.method = "GET";
+        this.rawPath = "/";
+        this.path = "/";
+        this.query = "";
+        this.httpVersion = "HTTP/1.1";
+        this.headers = new Map<string, string>();
+        this.body = "";
+
+        if (raw == "") {
+            return;
+        }
+
+        let separator: int = raw.indexOf("\r\n\r\n");
+        let headerText: string = raw;
+        if (separator >= 0) {
+            headerText = raw.substring(0, separator);
+            this.body = raw.substring(separator + 4, raw.length());
+        }
+
+        let lines: string[] = headerText.split("\r\n");
+        if (lines.length() == 0) {
+            return;
+        }
+
+        let firstLine: string[] = lines[0].split(" ");
+        if (firstLine.length() >= 3) {
+            this.method = stableText(firstLine[0]).toUpperCase();
+            this.rawPath = stableText(firstLine[1]);
+            this.httpVersion = stableText(firstLine[2]);
+        } else if (firstLine.length() >= 2) {
+            this.method = stableText(firstLine[0]).toUpperCase();
+            this.rawPath = stableText(firstLine[1]);
+        }
+
+        let queryStart: int = this.rawPath.indexOf("?");
+        if (queryStart >= 0) {
+            this.path = stableText(this.rawPath.substring(0, queryStart));
+            this.query = stableText(this.rawPath.substring(queryStart + 1, this.rawPath.length()));
+        } else {
+            this.path = stableText(this.rawPath);
+        }
+
+        this.headers = parseHeaderLines(lines, 1);
+    }
+
+    header(name: string): string {
+        return headerValue(this.headers, name);
+    }
+
+    queryParam(name: string): string {
+        return parseQueryValue(this.query, name);
+    }
+}
+
+function statusTextForCode(code: int): string {
+    if (code == 200) return "OK";
+    if (code == 201) return "Created";
+    if (code == 204) return "No Content";
+    if (code == 400) return "Bad Request";
+    if (code == 401) return "Unauthorized";
+    if (code == 403) return "Forbidden";
+    if (code == 404) return "Not Found";
+    if (code == 405) return "Method Not Allowed";
+    if (code == 500) return "Internal Server Error";
+    return "OK";
+}
+
+export class AppHttpResponse {
+    status: int;
+    headers: Map<string, string>;
+    body: string;
+
+    constructor() {
+        this.status = 200;
+        this.headers = new Map<string, string>();
+        this.headers.set("content-type", "application/json; charset=utf-8");
+        this.headers.set("connection", "close");
+        // Automatic CORS support for all frontend origins
+        this.headers.set("access-control-allow-origin", "*");
+        this.headers.set("access-control-allow-methods", "GET, POST, PUT, DELETE, OPTIONS");
+        this.headers.set("access-control-allow-headers", "Content-Type, Authorization, X-Requested-With, Accept");
+        this.body = "";
+    }
+
+    setHeader(name: string, value: string): void {
+        this.headers.set(name.toLowerCase(), value);
+    }
+
+    header(name: string): string {
+        return headerValue(this.headers, name);
+    }
+
+    send(stream: TcpStream): void {
+        let statusText = statusTextForCode(this.status);
+        if (this.status == 204) {
+            this.body = "";
+        }
+
+        let res: string = "HTTP/1.1 " + String(this.status) + " " + statusText + "\r\n";
+        let keys: string[] = this.headers.keys();
+        for (let i = 0; i < keys.length(); i++) {
+            let k: string = keys[i];
+            let value: string = headerValue(this.headers, k);
+            res = res + k + ": " + value + "\r\n";
+        }
+
+        res = res + "Content-Length: " + String(this.body.length()) + "\r\n\r\n";
+        res = res + this.body;
+        stream.send(res);
+    }
+}
+
+export function createAppJsonResponse(body: string, status: int = 200): AppHttpResponse {
+    let res: AppHttpResponse = new AppHttpResponse();
+    res.status = status;
+    res.body = body;
+    return res;
+}
+
+export class AppRouteContext {
+    request: AppHttpRequest;
+    params: Map<string, string>;
+
+    constructor(request: AppHttpRequest, params: Map<string, string>) {
+        this.request = request;
+        this.params = params;
+    }
+
+    param(name: string): string {
+        let val: Optional<string> = this.params.get(name);
+        if (val == None) {
+            return "";
+        }
+        return val as string;
+    }
+
+    query(name: string, fallback: string = ""): string {
+        let val: string = this.request.queryParam(name);
+        if (val == "") {
+            return fallback;
+        }
+        return val;
+    }
+}
+
+class RouteDefinition {
+    path: string;
+    method: string;
+    name: string;
+    segments: string[];
+
+    constructor(path: string, method: string, name: string) {
+        this.path = path;
+        this.method = method;
+        this.name = name;
+        this.segments = [];
+        let rawParts: string[] = path.split("/");
+        for (let i: int = 0; i < rawParts.length(); i++) {
+            if (rawParts[i] != "") {
+                this.segments.push(rawParts[i]);
+            }
+        }
+    }
+
+    signature(): string {
+        return this.method + " " + this.path;
+    }
+}
+
+class RouteMatch {
+    route: RouteDefinition;
+    params: Map<string, string>;
+
+    constructor(route: RouteDefinition, params: Map<string, string>) {
+        this.route = route;
+        this.params = params;
+    }
+}
+
+class RouteLookup {
+    match: Optional<RouteMatch>;
+    allowedMethods: string[];
+    routeName: string;
+
+    constructor(match: Optional<RouteMatch>, allowedMethods: string[], routeName: string) {
+        this.match = match;
+        this.allowedMethods = allowedMethods;
+        this.routeName = routeName;
+    }
+}
+
+export class RouteHandler {
+    handler: (ctx: AppRouteContext) => AppHttpResponse;
+
+    constructor(handler: (ctx: AppRouteContext) => AppHttpResponse) {
+        this.handler = handler;
+    }
+
+    handle(ctx: AppRouteContext): AppHttpResponse {
+        return this.handler(ctx);
+    }
+}
+
+export class RouteResolution {
+    routeName: string;
+    handler: Optional<RouteHandler>;
+    context: Optional<AppRouteContext>;
+    response: Optional<AppHttpResponse>;
+
+    constructor(
+        routeName: string,
+        handler: Optional<RouteHandler>,
+        context: Optional<AppRouteContext>,
+        response: Optional<AppHttpResponse>
+    ) {
+        this.routeName = routeName;
+        this.handler = handler;
+        this.context = context;
+        this.response = response;
+    }
+}
+
+export class AppHttpRouter {
+    private routes: RouteDefinition[];
+    private handlers: Map<string, RouteHandler>;
+
+    constructor() {
+        this.routes = [];
+        this.handlers = new Map<string, RouteHandler>();
+    }
+
+    private register(method: string, path: string, handler: (ctx: AppRouteContext) => AppHttpResponse): AppHttpRouter {
+        let route: RouteDefinition = new RouteDefinition(path, method, path);
+        this.routes.push(route);
+        this.handlers.set(route.signature(), new RouteHandler(handler));
+        return this;
+    }
+
+    get(path: string, handler: (ctx: AppRouteContext) => AppHttpResponse): AppHttpRouter {
+        return this.register("GET", path, handler);
+    }
+
+    post(path: string, handler: (ctx: AppRouteContext) => AppHttpResponse): AppHttpRouter {
+        return this.register("POST", path, handler);
+    }
+
+    put(path: string, handler: (ctx: AppRouteContext) => AppHttpResponse): AppHttpRouter {
+        return this.register("PUT", path, handler);
+    }
+
+    deleteRoute(path: string, handler: (ctx: AppRouteContext) => AppHttpResponse): AppHttpRouter {
+        return this.register("DELETE", path, handler);
+    }
+
+    patch(path: string, handler: (ctx: AppRouteContext) => AppHttpResponse): AppHttpRouter {
+        return this.register("PATCH", path, handler);
+    }
+
+    head(path: string, handler: (ctx: AppRouteContext) => AppHttpResponse): AppHttpRouter {
+        return this.register("HEAD", path, handler);
+    }
+
+    options(path: string, handler: (ctx: AppRouteContext) => AppHttpResponse): AppHttpRouter {
+        return this.register("OPTIONS", path, handler);
+    }
+
+    resolve(req: AppHttpRequest): RouteResolution {
+        let targetSegments: string[] = [];
+        let rawParts: string[] = req.path.split("/");
+        for (let i: int = 0; i < rawParts.length(); i++) {
+            if (rawParts[i] != "") {
+                targetSegments.push(rawParts[i]);
+            }
+        }
+
+        let allowedMethods: string[] = [];
+        let matchingGetRoute: Optional<RouteDefinition> = None;
+        let matchingGetParams: Optional<Map<string, string>> = None;
+        let explicitOptionsRoute: Optional<RouteDefinition> = None;
+        let explicitOptionsParams: Optional<Map<string, string>> = None;
+
+        for (let r: int = 0; r < this.routes.length(); r++) {
+            let route: RouteDefinition = this.routes[r];
+            if (route.segments.length() != targetSegments.length()) {
+                continue;
+            }
+
+            let matches: bool = true;
+            let params: Map<string, string> = new Map<string, string>();
+
+            for (let s: int = 0; s < route.segments.length(); s++) {
+                let seg: string = route.segments[s];
+                let targetSeg: string = targetSegments[s];
+
+                if (seg.startsWith(":")) {
+                    let paramName: string = seg.substring(1, seg.length());
+                    params.set(paramName, targetSeg);
+                } else if (seg != targetSeg) {
+                    matches = false;
+                    break;
+                }
+            }
+
+            if (matches) {
+                if (route.method == req.method) {
+                    let handler: Optional<RouteHandler> = this.handlers.get(route.signature());
+                    let ctx: AppRouteContext = new AppRouteContext(req, params);
+                    return new RouteResolution(route.name, handler, ctx, None);
+                }
+                if (route.method == "OPTIONS") {
+                    explicitOptionsRoute = route;
+                    explicitOptionsParams = params;
+                }
+                if (route.method == "GET") {
+                    matchingGetRoute = route;
+                    matchingGetParams = params;
+                }
+                allowedMethods.push(route.method);
+            }
+        }
+
+        // Handle OPTIONS requests (both explicit and dynamic preflight)
+        if (req.method == "OPTIONS") {
+            if (explicitOptionsRoute != None) {
+                let route: RouteDefinition = explicitOptionsRoute as RouteDefinition;
+                let handler: Optional<RouteHandler> = this.handlers.get(route.signature());
+                let ctx: AppRouteContext = new AppRouteContext(req, explicitOptionsParams as Map<string, string>);
+                return new RouteResolution(route.name, handler, ctx, None);
+            }
+            let preflight: AppHttpResponse = new AppHttpResponse();
+            preflight.status = 204;
+            let allowStr: string = allowedMethods.length() > 0 ? allowedMethods.join(", ") : "GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD";
+            preflight.setHeader("allow", allowStr);
+            preflight.setHeader("access-control-allow-methods", allowStr);
+            preflight.setHeader("access-control-allow-headers", "Content-Type, Authorization, X-Requested-With, Accept");
+            preflight.setHeader("access-control-allow-origin", "*");
+            return new RouteResolution("options_preflight", None, None, preflight);
+        }
+
+        // Handle HEAD by delegating to GET with empty body
+        if (req.method == "HEAD" && matchingGetRoute != None) {
+            let route: RouteDefinition = matchingGetRoute as RouteDefinition;
+            let handler: Optional<RouteHandler> = this.handlers.get(route.signature());
+            let ctx: AppRouteContext = new AppRouteContext(req, matchingGetParams as Map<string, string>);
+            if (handler != None) {
+                let rh: RouteHandler = handler as RouteHandler;
+                let fullRes: AppHttpResponse = rh.handle(ctx);
+                let headRes: AppHttpResponse = new AppHttpResponse();
+                headRes.status = fullRes.status;
+                let headKeys: string[] = fullRes.headers.keys();
+                for (let k: int = 0; k < headKeys.length(); k++) {
+                    let kn: string = headKeys[k];
+                    headRes.setHeader(kn, fullRes.header(kn));
+                }
+                headRes.setHeader("content-length", String(fullRes.body.length()));
+                headRes.body = "";
+                return new RouteResolution(route.name + "_head", None, None, headRes);
+            }
+        }
+
+        if (allowedMethods.length() > 0) {
+            let errorRes: AppHttpResponse = createAppJsonResponse(
+                "{\"error\":\"Method Not Allowed\",\"allowed\":[\"" + allowedMethods.join("\",\"") + "\"]}",
+                405
+            );
+            return new RouteResolution("method_not_allowed", None, None, errorRes);
+        }
+
+        let notFound: AppHttpResponse = createAppJsonResponse("{\"error\":\"Not Found\",\"path\":\"" + req.path + "\"}", 404);
+        return new RouteResolution("not_found", None, None, notFound);
+    }
+}
+
+export function logRoute(req: AppHttpRequest, routeName: string, response: AppHttpResponse, startedAt: int64): void {
+    let durationMs: int64 = now() - startedAt;
+    let statusColor: string = "32";
+    if (response.status >= 400 && response.status < 500) {
+        statusColor = "33";
+    } else if (response.status >= 500) {
+        statusColor = "31";
+    }
+
+    print(
+        colorLabel("route", "34"),
+        colorText(req.method, "35"),
+        colorText(req.path, "36"),
+        colorText(String(response.status), statusColor),
+        dimText("+" + String(durationMs) + "ms")
+    );
+}
+
+function processClient(stream: TcpStream, handler: (req: AppHttpRequest) => AppHttpResponse): void {
+    try {
+        let chunk: string = stream.read(8192);
+        if (chunk != "") {
+            let req: AppHttpRequest = new AppHttpRequest(chunk);
+            let res: AppHttpResponse = handler(req);
+            res.send(stream);
+        }
+    } catch (err) {
+        print(colorLabel("error", "31"), "Request error: ", String(err));
+    } finally {
+        try {
+            stream.close();
+        } catch (closeErr) {
+        }
+    }
+}
+
+export function serve(address: string, handler: (req: AppHttpRequest) => AppHttpResponse): void {
+    let listener: TcpListener;
+    try {
+        listener = net.listen(address);
+    } catch (err) {
+        if (address.startsWith("0.0.0.0:")) {
+            let fallbackAddr: string = "127.0.0.1:" + address.substring(8, address.length());
+            print(colorLabel("server", "33"), "Bind to " + address + " restricted, falling back to " + fallbackAddr);
+            listener = net.listen(fallbackAddr);
+            address = fallbackAddr;
+        } else {
+            throw err;
+        }
+    }
+    print(colorLabel("server", "32"), "Listening on " + address);
+
+    while (true) {
+        try {
+            let stream: TcpStream = listener.accept();
+            processClient(stream, handler);
+        } catch (err) {
+            print(colorLabel("server", "31"), "Accept error: ", String(err));
+        }
+    }
+}

@@ -1,0 +1,51 @@
+// Application bootstrap: MongoDB probe, state loading, and HTTP serving
+import { exit } from "std:system";
+import { now } from "std:time";
+import { 
+    resolvePort, 
+    resolveHost, 
+    resolveMongoUri 
+} from "./config/env.tx";
+import { createMongoConnectionFromUri, connectMongo, MongoDatabase } from "../../../mongo-sdk/src/index.tx";
+import { configureDatabaseConnection, setMongoDatabase } from "./core/persistence.tx";
+import { AppState, setAppState } from "./core/state.tx";
+import { loadAppStateFromMongoOrSeed } from "./core/store.tx";
+import { initializeAppRouter, handleAppRequest } from "./router/runtime.tx";
+import { serve, colorLabel, colorText, dimText } from "../server/index.tx";
+
+export function runApplication(): void {
+    let startedAt: int64 = now();
+    print(colorLabel("boot", "36"), "Booting TejX Digital Nomad Backend Service...");
+
+    let host: string = resolveHost();
+    let port: string = resolvePort();
+    let mongoUri: string = resolveMongoUri();
+
+    print(colorLabel("config", "34"), "Loaded environment configuration from .env / process env");
+    let conn = createMongoConnectionFromUri(mongoUri);
+    print(colorLabel("mongo", "35"), "Probing MongoDB with URI: " + mongoUri + " (" + conn.host + ":" + String(conn.port) + "/" + conn.database + ")...");
+    let client: Optional<MongoDatabase> = None;
+
+    try {
+        let db: MongoDatabase = connectMongo(conn);
+        db.ping();
+        client = db;
+        setMongoDatabase(client);
+        configureDatabaseConnection(conn, true);
+        print(colorLabel("mongo", "32"), "MongoDB connection verified successfully! Using persistent DB storage.");
+    } catch (err) {
+        setMongoDatabase(None);
+        configureDatabaseConnection(conn, false);
+        print(colorLabel("storage", "31"), "MongoDB is required and could not be reached: " + String(err));
+        exit(1);
+    }
+
+    let state: AppState = loadAppStateFromMongoOrSeed(client);
+    setAppState(state);
+    initializeAppRouter();
+
+    let bootDuration: int64 = now() - startedAt;
+    print(colorLabel("ready", "32"), "Server ready in " + String(bootDuration) + "ms! Serving on http://" + host + ":" + port);
+
+    serve(host + ":" + port, handleAppRequest);
+}

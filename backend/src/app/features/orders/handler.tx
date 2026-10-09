@@ -1,0 +1,104 @@
+// Order CRUD route handlers
+import { AppHttpResponse, AppRouteContext } from "../../../server/index.tx";
+import { JsonObject, objectOf, parseJson } from "../../helpers/json.tx";
+import { jsonSuccess, jsonError, jsonNotFound } from "../../core/responses.tx";
+import { getAppState, AppState } from "../../core/state.tx";
+import { nextEntityId } from "../../core/ids.tx";
+import { recordAppEvent } from "../../core/store.tx";
+import { AppOrder } from "./model.tx";
+import { now } from "std:time";
+
+export function handleListOrders(ctx: AppRouteContext): AppHttpResponse {
+    let state: AppState = getAppState();
+    let orders = state.orders.all();
+    let list: any[] = [];
+    for (let i = 0; i < orders.length(); i++) {
+        list.push(orders[i].toJSON());
+    }
+
+    let out: JsonObject = objectOf({});
+    out.setBool("success", true);
+    out.setInt("count", list.length());
+    out.setArray("orders", list);
+    return jsonSuccess("Orders retrieved", out);
+}
+
+export function handleGetOrder(ctx: AppRouteContext): AppHttpResponse {
+    let id: string = ctx.param("orderId");
+    let state: AppState = getAppState();
+    let ord = state.orders.get(id);
+    if (ord == None) {
+        return jsonNotFound("Order not found: " + id);
+    }
+    let o: AppOrder = ord as AppOrder;
+    let out: JsonObject = objectOf({});
+    out.setObject("order", o.toJSON());
+    return jsonSuccess("Order found", out);
+}
+
+export function handleCreateOrder(ctx: AppRouteContext): AppHttpResponse {
+    try {
+        let bodyRaw = ctx.request.body;
+        if (bodyRaw.trim() == "") {
+            return jsonError("Request body required", 400);
+        }
+        let parsed: any = parseJson(bodyRaw);
+        let userId: string = String(parsed["userId"] != None ? parsed["userId"] : "usr-1");
+        let rawPids: any = parsed["productIds"];
+        let productIds: string[] = [];
+        if (rawPids != None && typeof(rawPids) == "array") {
+            for (let i: int = 0; i < rawPids.length(); i++) {
+                productIds.push(String(rawPids[i]));
+            }
+        }
+        let total: float = parsed["total"] != None ? Number.Float(parsed["total"]) : 0.0;
+        let status: string = String(parsed["status"] != None ? parsed["status"] : "pending");
+
+        let state: AppState = getAppState();
+        let id: string = nextEntityId("ord", state.orders.ids);
+        let order: AppOrder = new AppOrder(id, userId, productIds, total, status, now());
+        state.orders.add(id, order);
+
+        recordAppEvent("order_created", "Order", id);
+
+        let out: JsonObject = objectOf({});
+        out.setObject("order", order.toJSON());
+        return jsonSuccess("Order created successfully", out);
+    } catch (e) {
+        return jsonError("Invalid JSON payload: " + String(e), 400);
+    }
+}
+
+export function handleUpdateOrder(ctx: AppRouteContext): AppHttpResponse {
+    try {
+        let id: string = ctx.param("orderId");
+        let state: AppState = getAppState();
+        let ordVal = state.orders.get(id);
+        if (ordVal == None) {
+            return jsonNotFound("Order not found: " + id);
+        }
+        let ord: AppOrder = ordVal as AppOrder;
+        let parsed: any = parseJson(ctx.request.body);
+
+        if (parsed["status"] != None) ord.status = String(parsed["status"]);
+        if (parsed["total"] != None) ord.total = Number.Float(parsed["total"]);
+
+        recordAppEvent("order_updated", "Order", id);
+
+        let out: JsonObject = objectOf({});
+        out.setObject("order", ord.toJSON());
+        return jsonSuccess("Order updated successfully", out);
+    } catch (e) {
+        return jsonError("Failed to update order: " + String(e), 400);
+    }
+}
+
+export function handleDeleteOrder(ctx: AppRouteContext): AppHttpResponse {
+    let id: string = ctx.param("orderId");
+    let state: AppState = getAppState();
+    if (!state.orders.remove(id)) {
+        return jsonNotFound("Order not found: " + id);
+    }
+    recordAppEvent("order_deleted", "Order", id);
+    return jsonSuccess("Order deleted successfully");
+}

@@ -1,0 +1,60 @@
+// Database diagnostics and management handler
+import { AppHttpResponse, AppRouteContext } from "../../../server/index.tx";
+import { JsonObject, objectOf } from "../../helpers/json.tx";
+import { jsonSuccess, jsonError } from "../../core/responses.tx";
+import { getMongoDiagnostics, getActiveConnection, configureDatabaseConnection, isMongoActive } from "../../core/persistence.tx";
+import { getAppState, AppState } from "../../core/state.tx";
+import { connectMongo, MongoDatabase, MongoConnection } from "../../../../../mongo-sdk/src/index.tx";
+import { loadAppStateFromMongoOrSeed } from "../../core/store.tx";
+import { getAuthenticatedClaims, hasPermission } from "../auth/handler.tx";
+import { TokenClaims } from "../auth/model.tx";
+
+function isAdminUser(claims: TokenClaims): bool {
+    let rootRole = claims.originalRole != "" ? claims.originalRole : claims.role;
+    return rootRole == "admin" || claims.role == "admin" || hasPermission(claims, "*");
+}
+
+export function handleDatabaseStatus(ctx: AppRouteContext): AppHttpResponse {
+    let diag: JsonObject = getMongoDiagnostics();
+    return jsonSuccess("Database status retrieved", diag);
+}
+
+export function handleDatabaseReconnect(ctx: AppRouteContext): AppHttpResponse {
+    let claimsOpt = getAuthenticatedClaims(ctx);
+    if (claimsOpt == None) {
+        return jsonError("Authentication is required to reconnect database", 401);
+    }
+    let claims = claimsOpt as TokenClaims;
+    if (!isAdminUser(claims)) {
+        return jsonError("Access denied: Administrative privileges required", 403);
+    }
+
+    let maybeConn = getActiveConnection();
+    if (maybeConn == None) {
+        return jsonError("No database connection profile configured", 500);
+    }
+
+    let conn = maybeConn as MongoConnection;
+    try {
+        let db: MongoDatabase = connectMongo(conn);
+        db.ping();
+        configureDatabaseConnection(conn, true);
+
+        let state: AppState = getAppState();
+        state.client = db;
+        loadAppStateFromMongoOrSeed(db);
+
+        let out: JsonObject = objectOf({});
+        out.setBool("success", true);
+        out.setString("message", "Successfully reconnected to MongoDB on " + conn.host + ":" + String(conn.port));
+        out.setString("database", conn.database);
+        return jsonSuccess("MongoDB reconnected successfully", out);
+    } catch (err) {
+        configureDatabaseConnection(conn, false, String(err));
+        let out: JsonObject = objectOf({});
+        out.setBool("success", false);
+        out.setString("error", String(err));
+        out.setString("hint", "Verify mongod daemon is running. E.g. 'brew services start mongodb-community'");
+        return jsonSuccess("Reconnection failed - staying in in-memory fallback", out);
+    }
+}

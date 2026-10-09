@@ -1,0 +1,6 @@
+// Main process entrypoint
+import { runApplication } from "./app/server.tx";
+
+function main(): void {
+    runApplication();
+}

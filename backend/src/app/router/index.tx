@@ -1,0 +1,149 @@
+// Central API Router for Enterprise Multi-Vendor Marketplace & Real-Time Financial Analytics
+import { AppHttpRouter, AppHttpResponse, AppRouteContext } from "../../server/index.tx";
+import { jsonSuccess } from "../core/responses.tx";
+import { JsonObject, objectOf } from "../helpers/json.tx";
+import { getStorageMode } from "../core/persistence.tx";
+import { now } from "std:time";
+
+// 1. IAM & Security
+import {
+    handleLogin,
+    handleGetMe,
+    handleUpdateMe,
+    handleLogout,
+    handleListStaff,
+    handleCreateStaff,
+    handleListUsers,
+    handleCreateUser,
+    handleUpdateUser,
+    handleUpdatePassword,
+    handleDeleteUser
+} from "../features/auth/handler.tx";
+
+// 2. Polymorphic Product Catalog & Transactions
+import {
+    handleGetCatalog,
+    handleGetProductDetails,
+    handleGetFacets,
+    handleCheckout,
+    handleListOrders,
+    handleGetOrderDetails,
+    handleGetVendorInventory,
+    handleUpdateVendorStock,
+    handleGetPromotions,
+    handleGetVendorMetrics,
+    handleSaveProduct,
+    handleDeleteProduct,
+    handleUpdateOrderFulfillment,
+    handleListVendors,
+    handleCreateVendor,
+    handleUpdateVendor,
+    handleDeleteVendor
+} from "../features/marketplace/handler.tx";
+
+// 3. Real-Time Financial Analytics & Outbox Pipeline
+import {
+    handleGetPlatformFinancialMatrix,
+    handleGetCommissionLedger,
+    handleGetTopKAnalytics,
+    handleGetDataTiering,
+    handleArchiveColdData,
+    handleGetOutboxStream,
+    handleGetRateLimits,
+    handleSimulateFlashSaleConcurrency
+} from "../features/analytics/handler.tx";
+
+// 4. MongoDB Diagnostics & BSON Wire Protocol Workbench
+import {
+    handleDatabaseStatus,
+    handleDatabaseReconnect
+} from "../features/database/handler.tx";
+
+import {
+    handleGetMongoOperations,
+    handleExecuteMongoOperation,
+    handleOptionsMongoOperations
+} from "../features/database/operations.tx";
+
+function handleWelcome(ctx: AppRouteContext): AppHttpResponse {
+    let out: JsonObject = objectOf({});
+    out.setString("engine", "TejX Enterprise Multi-Vendor Marketplace & Financial Analytics");
+    out.setString("version", "3.0.0");
+    out.setString("architecture", "Native LLVM Mach-O Binary + MongoDB OP_MSG Wire Driver");
+    out.setString("storageMode", getStorageMode());
+    return jsonSuccess("Welcome to TejX Enterprise API", out);
+}
+
+function handleHealth(ctx: AppRouteContext): AppHttpResponse {
+    let out: JsonObject = objectOf({});
+    out.setString("status", "healthy");
+    out.setString("storageMode", getStorageMode());
+    out.setInt64("timestamp", now());
+    return jsonSuccess("System healthy", out);
+}
+
+export function createAppRouter(): AppHttpRouter {
+    let router: AppHttpRouter = new AppHttpRouter();
+
+    // System Routes
+    router.get("/", handleWelcome);
+    router.get("/health", handleHealth);
+
+    // 1. Identity, Security & Access Control (IAM)
+    router.post("/api/auth/login", handleLogin);
+    router.get("/api/auth/me", handleGetMe);
+    router.put("/api/auth/me", handleUpdateMe);
+    router.post("/api/auth/logout", handleLogout);
+    router.get("/api/auth/staff", handleListStaff);
+    router.post("/api/auth/staff", handleCreateStaff);
+    router.get("/api/auth/users", handleListUsers);
+    router.post("/api/auth/users", handleCreateUser);
+    router.put("/api/auth/users/:userId", handleUpdateUser);
+    router.put("/api/auth/users/:userId/password", handleUpdatePassword);
+    router.deleteRoute("/api/auth/users/:userId", handleDeleteUser);
+
+    // 2. Polymorphic Product Catalog Engine
+    router.get("/api/marketplace/catalog", handleGetCatalog);
+    router.get("/api/marketplace/facets", handleGetFacets);
+    router.get("/api/marketplace/products/:productId", handleGetProductDetails);
+    router.post("/api/marketplace/products", handleSaveProduct);
+    router.put("/api/marketplace/products/:productId", handleSaveProduct);
+    router.deleteRoute("/api/marketplace/products/:productId", handleDeleteProduct);
+
+    // 3. High-Concurrency Transaction Engine (Zero-Overdraft, Idempotency, Snapshots)
+    router.post("/api/marketplace/checkout", handleCheckout);
+    router.get("/api/marketplace/orders", handleListOrders);
+    router.get("/api/marketplace/orders/:orderId", handleGetOrderDetails);
+    router.post("/api/marketplace/orders/:orderId/fulfillment", handleUpdateOrderFulfillment);
+
+    // 4. Multi-Tenant Vendor Portal & Inventory Control
+    router.get("/api/vendor/storefronts", handleListVendors);
+    router.post("/api/vendor/storefronts", handleCreateVendor);
+    router.put("/api/vendor/storefronts/:vendorId", handleUpdateVendor);
+    router.deleteRoute("/api/vendor/storefronts/:vendorId", handleDeleteVendor);
+    router.get("/api/vendor/inventory", handleGetVendorInventory);
+    router.post("/api/vendor/stock", handleUpdateVendorStock);
+    router.get("/api/vendor/promotions", handleGetPromotions);
+    router.get("/api/vendor/metrics", handleGetVendorMetrics);
+
+    // 5. Real-Time Financial Analytics Matrix & Ledgers
+    router.get("/api/analytics/financial-matrix", handleGetPlatformFinancialMatrix);
+    router.get("/api/analytics/commission-ledger", handleGetCommissionLedger);
+    router.get("/api/analytics/top-k", handleGetTopKAnalytics);
+    router.get("/api/analytics/data-tiering", handleGetDataTiering);
+    router.post("/api/analytics/data-tiering/archive", handleArchiveColdData);
+
+    // 6. Distributed Event Handling & DevOps Optimization
+    router.get("/api/analytics/outbox", handleGetOutboxStream);
+    router.get("/api/analytics/rate-limits", handleGetRateLimits);
+    router.post("/api/analytics/stress-test", handleSimulateFlashSaleConcurrency);
+
+    // 7. MongoDB Wire-Protocol Diagnostics & Operations
+    router.get("/api/database/status", handleDatabaseStatus);
+    router.post("/api/database/reconnect", handleDatabaseReconnect);
+    router.get("/api/database/operations", handleGetMongoOperations);
+    router.post("/api/database/operations", handleExecuteMongoOperation);
+    router.options("/api/database/operations", handleOptionsMongoOperations);
+
+    return router;
+}

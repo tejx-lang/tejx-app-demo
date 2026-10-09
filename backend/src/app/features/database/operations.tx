@@ -1,0 +1,284 @@
+// Comprehensive MongoDB operations executor & HTTP capabilities tester
+import { AppHttpResponse, AppRouteContext } from "../../../server/index.tx";
+import { JsonObject, objectOf, parseJson, plainJson } from "../../helpers/json.tx";
+import { jsonSuccess, jsonError } from "../../core/responses.tx";
+import { getMongoDatabase, getStorageMode, isMongoActive } from "../../core/persistence.tx";
+import { getAppState, AppState } from "../../core/state.tx";
+import { MongoDatabase } from "../../../../../mongo-sdk/src/index.tx";
+import { MongoJsonObject } from "../../../../../mongo-sdk/src/json.tx";
+import { AppProduct } from "../products/model.tx";
+import { now } from "std:time";
+import { getAuthenticatedClaims, hasPermission } from "../auth/handler.tx";
+import { TokenClaims } from "../auth/model.tx";
+
+function isDatabaseAdmin(claims: TokenClaims): bool {
+    let rootRole = claims.originalRole != "" ? claims.originalRole : claims.role;
+    return rootRole == "admin" || claims.role == "admin" || hasPermission(claims, "*");
+}
+
+export function handleGetMongoOperations(ctx: AppRouteContext): AppHttpResponse {
+    let claimsOpt = getAuthenticatedClaims(ctx);
+    if (claimsOpt == None) {
+        return jsonError("Authentication is required", 401);
+    }
+    let claims = claimsOpt as TokenClaims;
+    if (!isDatabaseAdmin(claims)) {
+        return jsonError("Access denied: Administrative privileges required", 403);
+    }
+
+    let state: AppState = getAppState();
+    let out: JsonObject = objectOf({});
+    out.setString("engine", "TejX Pure BSON Wire-Protocol Driver");
+    out.setString("storageMode", getStorageMode());
+    out.setBool("mongoConnected", isMongoActive());
+
+    let httpMethods: string[] = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"];
+    out.setStringArray("supportedHttpMethods", httpMethods);
+
+    let mongoOps: string[] = [
+        "ping",
+        "count",
+        "find",
+        "findOne",
+        "insertOne",
+        "insertMany",
+        "updateOne",
+        "upsertOne",
+        "deleteOne",
+        "deleteMany",
+        "listCollections"
+    ];
+    out.setStringArray("supportedMongoOperations", mongoOps);
+
+    let counts: JsonObject = objectOf({});
+    counts.setInt("users", state.users.all().length());
+    counts.setInt("products", state.products.all().length());
+    counts.setInt("orders", state.orders.all().length());
+    counts.setInt("events", state.events.all().length());
+    out.setObject("documentCounts", counts.toJSON());
+
+    return jsonSuccess("MongoDB operations manifest & driver specs", out);
+}
+
+export function handleExecuteMongoOperation(ctx: AppRouteContext): AppHttpResponse {
+    let claimsOpt = getAuthenticatedClaims(ctx);
+    if (claimsOpt == None) {
+        return jsonError("Authentication is required", 401);
+    }
+    let claims = claimsOpt as TokenClaims;
+    if (!isDatabaseAdmin(claims)) {
+        return jsonError("Access denied: Administrative privileges required", 403);
+    }
+
+    let started: int64 = now();
+    try {
+        let bodyRaw = ctx.request.body;
+        if (bodyRaw.trim() == "") {
+            return jsonError("Request body required: specify { op: 'ping'|'count'|'find'|... }", 400);
+        }
+        let parsed: any = parseJson(bodyRaw);
+        let op: string = String(parsed["op"] != None ? parsed["op"] : "ping").toLowerCase();
+        let collection: string = String(parsed["collection"] != None ? parsed["collection"] : "products");
+
+        let maybeDb = getMongoDatabase();
+        let isLive: bool = isMongoActive() && maybeDb != None;
+
+        let out: JsonObject = objectOf({});
+        out.setString("op", op);
+        out.setString("collection", collection);
+        out.setBool("executedOnLiveMongo", isLive);
+
+        let dbError: string = "";
+
+        if (op == "ping") {
+            if (isLive) {
+                try {
+                    let db: MongoDatabase = maybeDb as MongoDatabase;
+                    db.ping();
+                    out.setString("result", "PONG (Live MongoDB responded via OP_MSG protocol)");
+                } catch (err) {
+                    out.setString("result", "PONG (Memory fallback, live error: " + String(err) + ")");
+                    out.setString("error", String(err));
+                }
+            } else {
+                out.setString("result", "PONG (In-Memory Engine emulation)");
+            }
+        } else if (op == "count") {
+            let filterObj: MongoJsonObject = new MongoJsonObject({});
+            let countVal: int = 0;
+            let queriedLive: bool = false;
+            if (isLive) {
+                try {
+                    let db: MongoDatabase = maybeDb as MongoDatabase;
+                    countVal = db.count(collection, filterObj);
+                    queriedLive = true;
+                } catch (err) {
+                    dbError = String(err);
+                }
+            }
+            if (!queriedLive) {
+                let state: AppState = getAppState();
+                if (collection == "users") countVal = state.users.all().length();
+                else if (collection == "products") countVal = state.products.all().length();
+                else if (collection == "orders") countVal = state.orders.all().length();
+                else countVal = state.events.all().length();
+            }
+            out.setInt("count", countVal);
+            if (dbError != "") {
+                out.setString("notice", "Live Mongo: " + dbError + " (served from local memory cache)");
+            }
+            out.setString("result", "Counted " + String(countVal) + " documents in " + collection);
+        } else if (op == "listcollections") {
+            let names: string[] = ["users", "products", "orders", "marketplace_products", "marketplace_orders", "outbox_events", "events", "dashboard_config"];
+            if (isLive) {
+                try {
+                    let db: MongoDatabase = maybeDb as MongoDatabase;
+                    let liveNames: string[] = db.listCollections();
+                    if (liveNames.length() > 0) names = liveNames;
+                } catch (e) {
+                    dbError = String(e);
+                }
+            }
+            out.setStringArray("collections", names);
+            if (dbError != "") out.setString("notice", "Live Mongo: " + dbError);
+            out.setString("result", "Retrieved " + String(names.length()) + " collections");
+        } else if (op == "insertone" || op == "insert") {
+            let doc: any = parsed["document"] != None ? parsed["document"] : { title: "Lab Test", createdAt: now() };
+            if (isLive) {
+                try {
+                    let db: MongoDatabase = maybeDb as MongoDatabase;
+                    let mDoc: MongoJsonObject = new MongoJsonObject(doc);
+                    let res = db.insertOne(collection, mDoc);
+                    out.setObject("response", res.toJSON());
+                } catch (err) {
+                    dbError = String(err);
+                }
+            }
+            out.setObject("inserted", doc);
+            if (dbError != "") out.setString("notice", "Live Mongo: " + dbError);
+            out.setString("result", "Document inserted into " + collection);
+        } else if (op == "insertmany") {
+            let docsRaw: any[] = parsed["documents"] != None ? (parsed["documents"] as any[]) : [{ test: 1 }, { test: 2 }];
+            if (isLive) {
+                try {
+                    let db: MongoDatabase = maybeDb as MongoDatabase;
+                    let mDocs: MongoJsonObject[] = [];
+                    for (let i = 0; i < docsRaw.length(); i++) {
+                        mDocs.push(new MongoJsonObject(docsRaw[i]));
+                    }
+                    let res = db.insertMany(collection, mDocs);
+                    out.setObject("response", res.toJSON());
+                } catch (err) {
+                    dbError = String(err);
+                }
+            }
+            out.setInt("insertedCount", docsRaw.length());
+            if (dbError != "") out.setString("notice", "Live Mongo: " + dbError);
+            out.setString("result", "Batch inserted " + String(docsRaw.length()) + " documents into " + collection);
+        } else if (op == "findone") {
+            let state: AppState = getAppState();
+            let allProducts: AppProduct[] = state.products.all();
+            let sample: any = allProducts.length() > 0 ? allProducts[0].toJSON() : { id: "sample", name: "Product Sample" };
+            if (isLive) {
+                try {
+                    let db: MongoDatabase = maybeDb as MongoDatabase;
+                    let res = db.findOne(collection, new MongoJsonObject({}));
+                    if (res != None) {
+                        sample = (res as MongoJsonObject).toJSON();
+                    }
+                } catch (err) {
+                    dbError = String(err);
+                }
+            }
+            out.setObject("document", sample);
+            if (dbError != "") out.setString("notice", "Live Mongo: " + dbError);
+            out.setString("result", "Found single document in " + collection);
+        } else if (op == "find") {
+            let state: AppState = getAppState();
+            let allProducts: AppProduct[] = state.products.all();
+            let list: any[] = [];
+            for (let i: int = 0; i < allProducts.length(); i++) {
+                list.push(allProducts[i].toJSON());
+            }
+            if (isLive) {
+                try {
+                    let db: MongoDatabase = maybeDb as MongoDatabase;
+                    let res = db.find(collection, new MongoJsonObject({}));
+                    if (res.length() > 0) {
+                        list = [];
+                        for (let i = 0; i < res.length(); i++) {
+                            list.push(res[i].toJSON());
+                        }
+                    }
+                } catch (err) {
+                    dbError = String(err);
+                }
+            }
+            out.setArray("documents", list);
+            if (dbError != "") out.setString("notice", "Live Mongo: " + dbError);
+            out.setString("result", "Retrieved " + String(list.length()) + " documents from " + collection);
+        } else if (op == "updateone" || op == "update") {
+            let filter: any = parsed["filter"] != None ? parsed["filter"] : { id: "test" };
+            let setFields: any = parsed["update"] != None ? parsed["update"] : { updatedAt: now() };
+            if (isLive) {
+                try {
+                    let db: MongoDatabase = maybeDb as MongoDatabase;
+                    let res = db.updateOne(collection, new MongoJsonObject(filter), new MongoJsonObject(setFields));
+                    out.setObject("response", res.toJSON());
+                } catch (err) {
+                    dbError = String(err);
+                }
+            }
+            if (dbError != "") out.setString("notice", "Live Mongo: " + dbError);
+            out.setString("result", "Updated document matching filter in " + collection);
+        } else if (op == "deleteone" || op == "delete") {
+            let filter: any = parsed["filter"] != None ? parsed["filter"] : { id: "test" };
+            if (isLive) {
+                try {
+                    let db: MongoDatabase = maybeDb as MongoDatabase;
+                    let res = db.deleteOne(collection, new MongoJsonObject(filter));
+                    out.setObject("response", res.toJSON());
+                } catch (err) {
+                    dbError = String(err);
+                }
+            }
+            if (dbError != "") out.setString("notice", "Live Mongo: " + dbError);
+            out.setString("result", "Deleted document from " + collection);
+        } else if (op == "deletemany") {
+            let filter: any = parsed["filter"] != None ? parsed["filter"] : { tag: "temp" };
+            if (isLive) {
+                try {
+                    let db: MongoDatabase = maybeDb as MongoDatabase;
+                    let res = db.deleteMany(collection, new MongoJsonObject(filter));
+                    out.setObject("response", res.toJSON());
+                } catch (err) {
+                    dbError = String(err);
+                }
+            }
+            if (dbError != "") out.setString("notice", "Live Mongo: " + dbError);
+            out.setString("result", "Deleted all matching documents from " + collection);
+        } else {
+            return jsonError("Unknown MongoDB operation: " + op + ". Supported: ping, count, find, findOne, insertOne, insertMany, updateOne, deleteOne, deleteMany, listCollections", 400);
+        }
+
+        let duration: int64 = now() - started;
+        out.setInt64("latencyMs", duration);
+        return jsonSuccess("MongoDB operation '" + op + "' executed successfully", out);
+    } catch (e) {
+        return jsonError("Failed to execute MongoDB operation: " + String(e), 500);
+    }
+}
+
+export function handleOptionsMongoOperations(ctx: AppRouteContext): AppHttpResponse {
+    let res: AppHttpResponse = new AppHttpResponse();
+    res.status = 200;
+    res.setHeader("allow", "GET, POST, OPTIONS, HEAD");
+    res.setHeader("access-control-allow-methods", "GET, POST, OPTIONS, HEAD");
+    res.setHeader("access-control-allow-headers", "Content-Type, Authorization, X-Requested-With, Accept");
+    let out: JsonObject = objectOf({});
+    out.setString("endpoint", "/api/database/operations");
+    out.setStringArray("allowedMethods", ["GET", "POST", "OPTIONS", "HEAD"]);
+    out.setString("description", "Inspect and trigger pure TejX MongoDB wire operations dynamically");
+    res.body = plainJson(out);
+    return res;
+}

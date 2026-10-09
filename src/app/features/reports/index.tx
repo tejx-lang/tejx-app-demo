@@ -1,8 +1,0 @@
-// Public reports module entrypoint.
-import { ServerResponse } from "../../../modules/server/index.tx";
-import { AppState } from "../../core/state.tx";
-import { handleSummary } from "./handler.tx";
-
-export function handleReportsSummaryRoute(method: string, storageName: string, state: AppState): ServerResponse {
-    return handleSummary(method, storageName, state);
-}

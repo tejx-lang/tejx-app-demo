@@ -1,0 +1,123 @@
+// User CRUD route handlers
+import { AppHttpResponse, AppRouteContext } from "../../../server/index.tx";
+import { JsonObject, objectOf, parseJson } from "../../helpers/json.tx";
+import { jsonSuccess, jsonError, jsonNotFound } from "../../core/responses.tx";
+import { getAppState, AppState } from "../../core/state.tx";
+import { nextEntityId } from "../../core/ids.tx";
+import { recordAppEvent } from "../../core/store.tx";
+import { AppUser } from "./model.tx";
+import { now } from "std:time";
+
+export function handleListUsers(ctx: AppRouteContext): AppHttpResponse {
+    let state: AppState = getAppState();
+    let users = state.users.all();
+    let list: any[] = [];
+    for (let i = 0; i < users.length(); i++) {
+        list.push(users[i].toJSON());
+    }
+
+    let out: JsonObject = objectOf({});
+    out.setBool("success", true);
+    out.setInt("count", list.length());
+    out.setArray("users", list);
+    return jsonSuccess("Users retrieved", out);
+}
+
+export function handleGetUser(ctx: AppRouteContext): AppHttpResponse {
+    let id: string = ctx.param("userId");
+    let state: AppState = getAppState();
+    let user = state.users.get(id);
+    if (user == None) {
+        return jsonNotFound("User not found: " + id);
+    }
+    let u: AppUser = user as AppUser;
+    let out: JsonObject = objectOf({});
+    out.setObject("user", u.toJSON());
+    return jsonSuccess("User found", out);
+}
+
+export function handleCreateUser(ctx: AppRouteContext): AppHttpResponse {
+    try {
+        let bodyRaw = ctx.request.body;
+        if (bodyRaw.trim() == "") {
+            return jsonError("Request body required", 400);
+        }
+        let parsed: any = parseJson(bodyRaw);
+        let name: string = String(parsed["name"] != None ? parsed["name"] : "New User");
+        let email: string = String(parsed["email"] != None ? parsed["email"] : "user@nomad.io");
+        let role: string = String(parsed["role"] != None ? parsed["role"] : "Nomad Explorer");
+
+        let state: AppState = getAppState();
+        let id: string = nextEntityId("usr", state.users.ids);
+        let user: AppUser = new AppUser(id, name, email, role, now());
+        state.users.add(id, user);
+
+        recordAppEvent("user_created", "User", id);
+
+        let out: JsonObject = objectOf({});
+        out.setObject("user", user.toJSON());
+        return jsonSuccess("User created successfully", out);
+    } catch (e) {
+        return jsonError("Invalid JSON payload: " + String(e), 400);
+    }
+}
+
+export function handleUpdateUser(ctx: AppRouteContext): AppHttpResponse {
+    try {
+        let id: string = ctx.param("userId");
+        let state: AppState = getAppState();
+        let userVal = state.users.get(id);
+        if (userVal == None) {
+            return jsonNotFound("User not found: " + id);
+        }
+        let user: AppUser = userVal as AppUser;
+        let parsed: any = parseJson(ctx.request.body);
+
+        if (parsed["name"] != None) user.name = String(parsed["name"]);
+        if (parsed["email"] != None) user.email = String(parsed["email"]);
+        if (parsed["role"] != None) user.role = String(parsed["role"]);
+
+        recordAppEvent("user_updated", "User", id);
+
+        let out: JsonObject = objectOf({});
+        out.setObject("user", user.toJSON());
+        return jsonSuccess("User updated successfully", out);
+    } catch (e) {
+        return jsonError("Failed to update user: " + String(e), 400);
+    }
+}
+
+export function handleDeleteUser(ctx: AppRouteContext): AppHttpResponse {
+    let id: string = ctx.param("userId");
+    let state: AppState = getAppState();
+    if (!state.users.remove(id)) {
+        return jsonNotFound("User not found: " + id);
+    }
+    recordAppEvent("user_deleted", "User", id);
+    return jsonSuccess("User deleted successfully");
+}
+
+export function handlePatchUser(ctx: AppRouteContext): AppHttpResponse {
+    try {
+        let id: string = ctx.param("userId");
+        let state: AppState = getAppState();
+        let userVal = state.users.get(id);
+        if (userVal == None) {
+            return jsonNotFound("User not found: " + id);
+        }
+        let user: AppUser = userVal as AppUser;
+        let parsed: any = parseJson(ctx.request.body);
+
+        if (parsed["name"] != None) user.name = String(parsed["name"]);
+        if (parsed["email"] != None) user.email = String(parsed["email"]);
+        if (parsed["role"] != None) user.role = String(parsed["role"]);
+
+        recordAppEvent("user_patched", "User", id);
+
+        let out: JsonObject = objectOf({});
+        out.setObject("user", user.toJSON());
+        return jsonSuccess("User patched (partial update) successfully", out);
+    } catch (e) {
+        return jsonError("Failed to patch user: " + String(e), 400);
+    }
+}

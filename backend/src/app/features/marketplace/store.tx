@@ -1,0 +1,236 @@
+import { now } from "std:time";
+import { Map } from "std:collections";
+import { getMongoDatabase, isMongoActive } from "../../core/persistence.tx";
+import { MongoDatabase } from "../../../../../mongo-sdk/src/index.tx";
+import { MongoJsonObject } from "../../../../../mongo-sdk/src/json.tx";
+import {
+    MarketplaceVendor,
+    MarketplaceProduct,
+    MarketplaceVariant,
+    WarehouseStock,
+    PromotionRule,
+    SnapshotInvoice,
+    SnapshotInvoiceItem,
+    OutboxEvent
+} from "./model.tx";
+
+class MarketplaceStore {
+    vendors: Map<string, MarketplaceVendor>;
+    vendorIds: string[];
+    products: Map<string, MarketplaceProduct>;
+    productIds: string[];
+    promotions: Map<string, PromotionRule>;
+    invoices: Map<string, SnapshotInvoice>; // key: orderId
+    idempotencyMap: Map<string, SnapshotInvoice>; // key: idempotencyKey
+    outbox: OutboxEvent[];
+    orderCounter: int;
+
+    constructor() {
+        this.vendors = new Map<string, MarketplaceVendor>();
+        this.vendorIds = [];
+        this.products = new Map<string, MarketplaceProduct>();
+        this.productIds = [];
+        this.promotions = new Map<string, PromotionRule>();
+        this.invoices = new Map<string, SnapshotInvoice>();
+        this.idempotencyMap = new Map<string, SnapshotInvoice>();
+        this.outbox = [];
+        this.orderCounter = 0;
+        this.hydrateFromMongo();
+    }
+
+    addVendor(vendor: MarketplaceVendor): void {
+        this.vendors.set(vendor.id, vendor);
+        let exists: bool = false;
+        for (let i = 0; i < this.vendorIds.length(); i++) {
+            if (this.vendorIds[i] == vendor.id) {
+                exists = true;
+                break;
+            }
+        }
+        if (!exists) {
+            this.vendorIds.push(vendor.id);
+        }
+        this.persistVendor(vendor);
+    }
+
+    persistVendor(vendor: MarketplaceVendor): void {
+        let maybeDb = getMongoDatabase();
+        if (!isMongoActive() || maybeDb == None) return;
+        try {
+            let db: MongoDatabase = maybeDb as MongoDatabase;
+            db.upsertOne("storefronts", new MongoJsonObject({ id: vendor.id }), new MongoJsonObject(vendor.toJSON()));
+        } catch (e) {
+            print("[mongo-err] Failed to persist storefront: " + String(e));
+        }
+    }
+
+    deleteProduct(productId: string): void {
+        this.products.delete(productId);
+        let ids: string[] = [];
+        for (let i = 0; i < this.productIds.length(); i++) {
+            if (this.productIds[i] != productId) ids.push(this.productIds[i]);
+        }
+        this.productIds = ids;
+        let maybeDb = getMongoDatabase();
+        if (!isMongoActive() || maybeDb == None) return;
+        try {
+            let db: MongoDatabase = maybeDb as MongoDatabase;
+            db.deleteOne("marketplace_products", new MongoJsonObject({ id: productId }));
+        } catch (e) {
+            print("[mongo-err] Failed to delete product: " + String(e));
+        }
+    }
+
+    deleteVendor(vendorId: string): void {
+        this.vendors.delete(vendorId);
+        let ids: string[] = [];
+        for (let i = 0; i < this.vendorIds.length(); i++) {
+            if (this.vendorIds[i] != vendorId) ids.push(this.vendorIds[i]);
+        }
+        this.vendorIds = ids;
+        let maybeDb = getMongoDatabase();
+        if (!isMongoActive() || maybeDb == None) return;
+        try {
+            let db: MongoDatabase = maybeDb as MongoDatabase;
+            db.deleteOne("storefronts", new MongoJsonObject({ id: vendorId }));
+        } catch (e) {
+            print("[mongo-err] Failed to delete storefront: " + String(e));
+        }
+    }
+
+    reloadVendorsFromMongo(): void {
+        let maybeDb = getMongoDatabase();
+        if (!isMongoActive() || maybeDb == None) return;
+        try {
+            let db: MongoDatabase = maybeDb as MongoDatabase;
+            let vendorDocs = db.find("storefronts", new MongoJsonObject({}));
+            this.vendors = new Map<string, MarketplaceVendor>();
+            this.vendorIds = [];
+            for (let i = 0; i < vendorDocs.length(); i++) {
+                let d = vendorDocs[i];
+                let id = d.string("id");
+                if (id == "") continue;
+                this.vendors.set(id, new MarketplaceVendor(id, d.string("name"), d.string("tier"), d.float("rating"), d.float("commissionRate"), d.float("cancellationRate"), d.int("activeSkus"), d.string("status")));
+                this.vendorIds.push(id);
+            }
+        } catch (e) {
+            print("[mongo-err] Failed to reload vendors: " + String(e));
+        }
+    }
+
+    // Hydrate state strictly from MongoDB collections.
+    private hydrateFromMongo(): void {
+        let maybeDb = getMongoDatabase();
+        if (!isMongoActive() || maybeDb == None) return;
+
+        try {
+            let db: MongoDatabase = maybeDb as MongoDatabase;
+            let vendorDocs = db.find("storefronts", new MongoJsonObject({}));
+            for (let i = 0; i < vendorDocs.length(); i++) {
+                let d = vendorDocs[i];
+                let id = d.string("id");
+                if (id == "") continue;
+                this.addVendor(new MarketplaceVendor(id, d.string("name"), d.string("tier"), d.float("rating"), d.float("commissionRate"), d.float("cancellationRate"), d.int("activeSkus"), d.string("status")));
+            }
+
+            let productDocs = db.find("marketplace_products", new MongoJsonObject({}));
+            for (let i = 0; i < productDocs.length(); i++) {
+                let d = productDocs[i];
+                let id = d.string("id");
+                if (id == "") continue;
+                let variants: MarketplaceVariant[] = [];
+                let variantDocs = d.objectArray("variants");
+                for (let j = 0; j < variantDocs.length(); j++) {
+                    let vd = variantDocs[j];
+                    let warehouses: WarehouseStock[] = [];
+                    let warehouseDocs = vd.objectArray("warehouses");
+                    for (let k = 0; k < warehouseDocs.length(); k++) {
+                        warehouses.push(new WarehouseStock(warehouseDocs[k].string("code"), warehouseDocs[k].int("stock")));
+                    }
+                    variants.push(new MarketplaceVariant(vd.string("sku"), vd.string("name"), vd.string("optionValues"), vd.float("price"), vd.int("stock"), warehouses));
+                }
+                let product = new MarketplaceProduct(id, d.string("vendorId"), d.string("vendorName"), d.float("vendorRating"), d.string("title"), d.string("category"), d.string("brand"), d.float("basePrice"), d.float("salePrice"), d.bool("isFlashSale"), d.int("flashDiscountPercent"), variants, d.int("totalStock"), d.bool("isListed"), d.float("rating"), d.int("reviewCount"), d.string("image"), d.int64("createdAt"));
+                product.specifications = d.string("specifications");
+                this.products.set(id, product);
+                this.productIds.push(id);
+            }
+
+            let orderDocs = db.find("marketplace_orders", new MongoJsonObject({}));
+            for (let i = 0; i < orderDocs.length(); i++) {
+                let d = orderDocs[i];
+                let orderId = d.string("orderId");
+                if (orderId == "") continue;
+                let items: SnapshotInvoiceItem[] = [];
+                let itemDocs = d.objectArray("items");
+                for (let j = 0; j < itemDocs.length(); j++) {
+                    let item = itemDocs[j];
+                    items.push(new SnapshotInvoiceItem(item.string("sku"), item.string("productId"), item.string("title"), item.string("vendorId"), item.string("vendorName"), item.float("unitPrice"), item.int("quantity"), item.float("subtotal"), item.float("taxAmount"), item.float("commissionAmount"), item.float("vendorPayout")));
+                }
+                let invoice = new SnapshotInvoice(orderId, d.string("idempotencyKey"), d.string("correlationId"), d.string("customerId"), d.string("customerEmail"), items, d.float("grossMerchandiseValue"), d.float("taxRate"), d.float("totalTax"), d.float("platformCommissionRate"), d.float("totalPlatformCommission"), d.float("paymentProcessingFee"), d.float("netVendorPayout"), d.string("status"), d.int64("createdAt"));
+                this.invoices.set(orderId, invoice);
+                if (invoice.idempotencyKey != "") this.idempotencyMap.set(invoice.idempotencyKey, invoice);
+            }
+        } catch (e) {
+            print("[mongo-err] Marketplace hydration failed: " + String(e));
+        }
+    }
+
+    appendOutbox(correlationId: string, eventType: string, payload: string): OutboxEvent {
+        let evId: string = "outbox-ev-" + String(this.outbox.length() + 1);
+        let ev = new OutboxEvent(evId, correlationId, eventType, payload, "COMMITTED_ATOMIC", now());
+        this.outbox.push(ev);
+        this.persistOutboxEvent(ev);
+        return ev;
+    }
+
+    persistOutboxEvent(ev: OutboxEvent): void {
+        let maybeDb = getMongoDatabase();
+        if (isMongoActive() && maybeDb != None) {
+            try {
+                let db: MongoDatabase = maybeDb as MongoDatabase;
+                let mDoc: MongoJsonObject = new MongoJsonObject(ev.toJSON());
+                db.insertOne("outbox_events", mDoc);
+            } catch (e) {
+            }
+        }
+    }
+
+    persistInvoice(inv: SnapshotInvoice): void {
+        let maybeDb = getMongoDatabase();
+        if (isMongoActive() && maybeDb != None) {
+            try {
+                let db: MongoDatabase = maybeDb as MongoDatabase;
+                let mDoc: MongoJsonObject = new MongoJsonObject(inv.toJSON());
+                db.upsertOne("marketplace_orders", new MongoJsonObject({ orderId: inv.orderId }), mDoc);
+            } catch (e) {
+            }
+        }
+    }
+
+    persistProduct(p: MarketplaceProduct): void {
+        let maybeDb = getMongoDatabase();
+        if (isMongoActive() && maybeDb != None) {
+            try {
+                let db: MongoDatabase = maybeDb as MongoDatabase;
+                let filter: MongoJsonObject = new MongoJsonObject({ id: p.id });
+                let updateDoc: MongoJsonObject = new MongoJsonObject(p.toJSON());
+                db.upsertOne("marketplace_products", filter, updateDoc);
+            } catch (e) {
+            }
+        }
+    }
+
+    nextOrderId(): string {
+        this.orderCounter = this.orderCounter + 1;
+        return "ord-" + String(now()) + "-" + String(this.orderCounter);
+    }
+}
+
+let globalMarketplaceStore: Optional<MarketplaceStore> = None;
+
+export function getMarketplaceStore(): MarketplaceStore {
+    if (globalMarketplaceStore == None) {
+        globalMarketplaceStore = new MarketplaceStore();
+    }
+    return globalMarketplaceStore as MarketplaceStore;
+}

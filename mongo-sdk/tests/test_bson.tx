@@ -1,0 +1,91 @@
+// Standalone BSON and JSON test for mongo-sdk package
+import { MongoJsonObject, objectOf } from "../src/json.tx";
+import { encodeDocument, decodeDocument, bsonDate } from "../src/bson.tx";
+import std:binary;
+
+function main(): void {
+    print("=== Testing TejX Mongo SDK BSON Engine ===");
+
+    let doc: MongoJsonObject = objectOf({});
+    doc.setString("title", "TejX MongoDB Driver");
+    doc.setInt("version", 1);
+    doc.setBool("active", true);
+
+    let bytes: int[] = encodeDocument(doc);
+    print("Encoded document byte length: ", bytes.length());
+
+    if (bytes.length() <= 5) {
+        throw new Error("BSON encoding failed: document too short");
+    }
+
+    let decoded: MongoJsonObject = decodeDocument(bytes);
+    print("Decoded title: ", decoded.string("title"));
+    print("Decoded version: ", decoded.int("version"));
+    print("Decoded active: ", decoded.bool("active"));
+
+    if (decoded.string("title") != "TejX MongoDB Driver") {
+        throw new Error("BSON decoding mismatch on 'title'");
+    }
+    if (decoded.int("version") != 1) {
+        throw new Error("BSON decoding mismatch on 'version'");
+    }
+    if (!decoded.bool("active")) {
+        throw new Error("BSON decoding mismatch on 'active'");
+    }
+
+    // --- Test BSON Date / Time Encoding & Decoding ---
+    print("--- Testing BSON Datetime Storage ---");
+    let testTimestamp: int64 = 1728444263000;
+
+    // 1. Explicit setDate
+    let dateDoc: MongoJsonObject = objectOf({});
+    dateDoc.setDate("createdAt", testTimestamp);
+    dateDoc.setInt64("timestamp", testTimestamp);
+    dateDoc.setInt64("normalInt64", testTimestamp);
+
+    let dateBytes: int[] = encodeDocument(dateDoc);
+    print("Encoded date document byte length: ", dateBytes.length());
+
+    // Inspect BSON wire bytes:
+    // First element starts at index 4.
+    // Byte at index 4 is type byte for "createdAt" -> must be 9 (bsonTypeDatetime), NOT 18 (int64)
+    let createdAtTypeByte: int = dateBytes[4];
+    print("createdAt BSON type byte: ", createdAtTypeByte);
+    if (createdAtTypeByte != 9) {
+        throw new Error("Expected createdAt BSON type byte to be 9 (bsonTypeDatetime), got: " + String(createdAtTypeByte));
+    }
+
+    let decodedDate: MongoJsonObject = decodeDocument(dateBytes);
+    print("Decoded createdAt: ", decodedDate.int64("createdAt"));
+    print("Decoded timestamp: ", decodedDate.int64("timestamp"));
+    print("Decoded normalInt64: ", decodedDate.int64("normalInt64"));
+
+    if (decodedDate.int64("createdAt") != testTimestamp) {
+        throw new Error("BSON datetime mismatch on 'createdAt'");
+    }
+    if (decodedDate.date("createdAt") != testTimestamp) {
+        throw new Error("BSON date getter mismatch on 'createdAt'");
+    }
+    if (decodedDate.int64("timestamp") != testTimestamp) {
+        throw new Error("BSON datetime mismatch on 'timestamp'");
+    }
+    if (decodedDate.int64("normalInt64") != testTimestamp) {
+        throw new Error("BSON int64 mismatch on 'normalInt64'");
+    }
+
+    // 2. Explicit bsonDate helper
+    let explicitBsonDateDoc: MongoJsonObject = objectOf({});
+    explicitBsonDateDoc.setObject("customField", bsonDate(testTimestamp));
+    let explicitBytes: int[] = encodeDocument(explicitBsonDateDoc);
+    let customFieldTypeByte: int = explicitBytes[4];
+    print("customField with bsonDate BSON type byte: ", customFieldTypeByte);
+    if (customFieldTypeByte != 9) {
+        throw new Error("Expected customField BSON type byte to be 9, got: " + String(customFieldTypeByte));
+    }
+    let decodedCustom: MongoJsonObject = decodeDocument(explicitBytes);
+    if (decodedCustom.int64("customField") != testTimestamp) {
+        throw new Error("BSON datetime mismatch on customField");
+    }
+
+    print("=== All Mongo SDK BSON Tests Passed! ===");
+}

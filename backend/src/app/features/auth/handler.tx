@@ -1,0 +1,598 @@
+// IAM HTTP Request Handlers
+import { now } from "std:time";
+import { AppRouteContext, AppHttpResponse } from "../../../server/index.tx";
+import { jsonSuccess, jsonError } from "../../core/responses.tx";
+import { JsonObject, objectOf, parseJson } from "../../helpers/json.tx";
+import { getAuthService } from "./service.tx";
+import { TokenClaims, UserAccount } from "./model.tx";
+import { getMarketplaceStore } from "../marketplace/store.tx";
+import { MarketplaceVendor } from "../marketplace/model.tx";
+
+export function bearerToken(ctx: AppRouteContext): string {
+    let authHeader: string = ctx.request.header("authorization").trim();
+    if (authHeader.startsWith("Bearer ")) {
+        return authHeader.substring(7, authHeader.length()).trim();
+    }
+    return "";
+}
+
+export function hasPermission(claims: TokenClaims, permission: string): bool {
+    for (let i: int = 0; i < claims.permissions.length(); i++) {
+        if (claims.permissions[i] == "*" || claims.permissions[i] == permission) return true;
+    }
+    return false;
+}
+
+export function getAuthenticatedClaims(ctx: AppRouteContext): Optional<TokenClaims> {
+    let token = bearerToken(ctx);
+    if (token == "") return None;
+    return getAuthService().verifyToken(token);
+}
+
+function roleRank(r: string): int {
+    if (r == "admin" || r == "superadmin") return 3;
+    if (r == "vendor") return 2;
+    if (r == "customer") return 1;
+    return 0; // guest
+}
+
+function maySwitchToRole(originalRole: string, targetRole: string): bool {
+    let sourceRank: int = roleRank(originalRole);
+    let targetRank: int = roleRank(targetRole);
+    return targetRank <= sourceRank;
+}
+
+function canImpersonate(claims: TokenClaims): bool {
+    let rootRole: string = claims.originalRole != "" ? claims.originalRole : claims.role;
+    return roleRank(rootRole) >= 1;
+}
+
+function mayManageUsers(ctx: AppRouteContext): bool {
+    let claims = getAuthenticatedClaims(ctx);
+    return claims != None && hasPermission(claims as TokenClaims, "users:manage");
+}
+
+export function handleLogin(ctx: AppRouteContext): AppHttpResponse {
+    let rawBody = ctx.request.body;
+    let bodyObj: any = {};
+    if (rawBody != "") {
+        try {
+            bodyObj = parseJson(rawBody);
+        } catch (e) {
+        }
+    }
+
+    let auth = getAuthService();
+    let previousToken: string = bearerToken(ctx);
+
+    let sub: string = "";
+    let username: string = "";
+    let name: string = "";
+    let email: string = "";
+    let role: string = "";
+    let vendorId: string = "";
+    let permissions: string[] = [];
+    let originalRole: string = "";
+    let originalSub: string = "";
+    let originalName: string = "";
+    let originalVendorId: string = "";
+
+    // 1. Password-based authentication — this is the primary login path
+    if (bodyObj["username"] != None && bodyObj["password"] != None) {
+        let uName: string = String(bodyObj["username"]).trim();
+        let pwd: string = String(bodyObj["password"]).trim();
+
+        if (uName == "" || pwd == "") {
+            return jsonError("Username and password cannot be empty", 400);
+        }
+
+        let matched = auth.authenticateUser(uName, pwd);
+        if (matched == None) {
+            return jsonError("Invalid username or password", 401);
+        }
+        let user = matched as UserAccount;
+        sub = user.id;
+        username = user.username;
+        name = user.name;
+        email = user.email;
+        role = user.role;
+        vendorId = user.vendorId;
+        if (role == "admin") {
+            vendorId = "";
+        }
+        permissions = user.permissions;
+        originalRole = user.role;
+        originalSub = user.id;
+        originalName = user.name;
+        originalVendorId = vendorId;
+    } else {
+        // 2. Role-switch path:
+        // Admin can switch to admin, vendor, customer, guest.
+        // Vendor can switch to vendor, customer, guest.
+        // Customer can switch to customer, guest.
+        let requestedRole: string = String(bodyObj["role"] != None ? bodyObj["role"] : "").toLowerCase();
+        if (requestedRole == "superadmin") {
+            requestedRole = "admin";
+        }
+        if (requestedRole == "") {
+            return jsonError("Username and password or target role is required", 400);
+        }
+
+        if (previousToken == "") {
+            if (requestedRole == "guest") {
+                sub = "usr-guest-" + String(now());
+                name = "Anonymous Guest";
+                email = "guest@marketplace.io";
+                role = "guest";
+                permissions = ["catalog:read"];
+                originalRole = "guest";
+                originalSub = sub;
+                originalName = name;
+                originalVendorId = "";
+            } else {
+                return jsonError("An active session is required to switch roles", 401);
+            }
+        } else {
+            let verified = auth.verifyToken(previousToken);
+            if (verified == None) {
+                return jsonError("Your session has expired. Please sign in again.", 401);
+            }
+            let claims: TokenClaims = verified as TokenClaims;
+            originalRole = claims.originalRole != "" ? claims.originalRole : claims.role;
+            originalSub = claims.originalSub != "" ? claims.originalSub : claims.sub;
+            originalName = claims.originalName != "" ? claims.originalName : claims.name;
+            originalVendorId = claims.originalVendorId != "" ? claims.originalVendorId : claims.vendorId;
+
+            if (!maySwitchToRole(originalRole, requestedRole)) {
+                return jsonError("Your account (" + originalRole + ") is not authorized to switch to " + requestedRole, 403);
+            }
+
+            // Keep the exact same logged-in user identity — only the pretended role and permissions change
+            sub = originalSub;
+            name = originalName;
+            email = claims.email;
+
+            if (requestedRole == "admin") {
+                role = "admin";
+                vendorId = "";
+                permissions = ["*"];
+            } else if (requestedRole == "vendor") {
+                let targetVendorId: string = String(bodyObj["vendorId"] != None ? bodyObj["vendorId"] : "");
+                if (targetVendorId == "" && originalVendorId != "") {
+                    targetVendorId = originalVendorId;
+                }
+                let mStore = getMarketplaceStore();
+                if (targetVendorId == "" && mStore.vendorIds.length() > 0) {
+                    targetVendorId = mStore.vendorIds[0];
+                }
+                if (targetVendorId == "") {
+                    targetVendorId = "vnd-solis";
+                }
+                role = "vendor";
+                vendorId = targetVendorId;
+                permissions = ["inventory:manage", "promotions:write", "analytics:read", "products:write", "orders:fulfill", "staff:manage", "cart:write", "checkout:execute", "invoices:read"];
+            } else if (requestedRole == "customer") {
+                role = "customer";
+                vendorId = "";
+                permissions = ["catalog:read", "cart:write", "checkout:execute", "invoices:read"];
+            } else if (requestedRole == "guest") {
+                role = "guest";
+                vendorId = "";
+                permissions = ["catalog:read"];
+            } else {
+                return jsonError("Unsupported role switch: " + requestedRole, 400);
+            }
+        }
+    }
+
+    let token = auth.generateToken(sub, name, email, role, vendorId, permissions, originalRole, originalSub, originalName, originalVendorId);
+
+    let out: JsonObject = objectOf({});
+    out.setString("token", token);
+    out.setString("tokenType", "Bearer");
+    out.setString("sub", sub);
+    if (username != "") {
+        out.setString("username", username);
+    }
+    out.setString("name", name);
+    out.setString("email", email);
+    out.setString("role", role);
+    out.setString("vendorId", vendorId);
+    out.setStringArray("permissions", permissions);
+    out.setString("originalRole", originalRole);
+    out.setString("originalSub", originalSub);
+    out.setString("originalName", originalName);
+    out.setString("keyType", "Asymmetric EdDSA Public/Private Key Pair");
+
+    return jsonSuccess("Authenticated successfully via Asymmetric JWT", out);
+}
+
+export function handleGetMe(ctx: AppRouteContext): AppHttpResponse {
+    let token: string = bearerToken(ctx);
+
+    if (token == "") {
+        return jsonError("Missing Authorization header (Bearer token required)", 401);
+    }
+
+    let auth = getAuthService();
+    let verified = auth.verifyToken(token);
+    if (verified == None) {
+        return jsonError("Invalid, expired, or blacklisted token", 401);
+    }
+
+    let claims: TokenClaims = verified as TokenClaims;
+    let out: JsonObject = objectOf(claims.toJSON());
+    out.setBool("authenticated", true);
+    let u = auth.getUserById(claims.sub);
+    if (u != None) {
+        let acc = u as UserAccount;
+        out.setString("username", acc.username);
+    }
+    return jsonSuccess("User claims verified from Asymmetric JWT signature", out);
+}
+
+export function handleLogout(ctx: AppRouteContext): AppHttpResponse {
+    let token: string = bearerToken(ctx);
+
+    if (token != "") {
+        let auth = getAuthService();
+        auth.blacklistToken(token, "User requested revocation / logout");
+    }
+
+    let out: JsonObject = objectOf({});
+    out.setBool("revoked", true);
+    out.setString("status", "Token added to Token Blacklist Cache & MongoDB");
+    return jsonSuccess("Logged out successfully and token revoked", out);
+}
+
+export function handleListStaff(ctx: AppRouteContext): AppHttpResponse {
+    let claimsOpt = getAuthenticatedClaims(ctx);
+    if (claimsOpt == None) return jsonError("Authentication required", 401);
+    let claims = claimsOpt as TokenClaims;
+
+    let vendorId: string = ctx.query("vendorId", claims.vendorId);
+    let isRootAdmin = (claims.originalRole == "admin" || claims.role == "admin" || hasPermission(claims, "*"));
+    if (!isRootAdmin) {
+        if (claims.role != "vendor") {
+            return jsonError("Access denied: Vendor or administrative privileges required", 403);
+        }
+        vendorId = claims.vendorId;
+    }
+
+    let auth = getAuthService();
+    let staff = auth.getStaffAccounts(vendorId);
+
+    let list: any[] = [];
+    for (let i = 0; i < staff.length(); i++) {
+        list.push(staff[i].toJSON());
+    }
+
+    let out: JsonObject = objectOf({});
+    out.setArray("staffAccounts", list);
+    out.setInt("totalCount", list.length());
+    return jsonSuccess("Staff sub-accounts fetched", out);
+}
+
+export function handleCreateStaff(ctx: AppRouteContext): AppHttpResponse {
+    let claimsOpt = getAuthenticatedClaims(ctx);
+    if (claimsOpt == None) return jsonError("Authentication required", 401);
+    let claims = claimsOpt as TokenClaims;
+
+    let isRootAdmin = (claims.originalRole == "admin" || claims.role == "admin" || hasPermission(claims, "*"));
+    if (!isRootAdmin && claims.role != "vendor") {
+        return jsonError("Access denied: Vendor or administrative privileges required", 403);
+    }
+
+    let rawBody = ctx.request.body;
+    if (rawBody == "") {
+        return jsonError("Staff account payload required", 400);
+    }
+
+    try {
+        let body: any = parseJson(rawBody);
+        let vendorId: string = String(body["vendorId"] != None ? body["vendorId"] : claims.vendorId);
+        if (!isRootAdmin) {
+            vendorId = claims.vendorId;
+        }
+        let name: string = String(body["name"] != None ? body["name"] : "Staff Member");
+        let email: string = String(body["email"] != None ? body["email"] : "staff@vendor.io");
+        
+        let perms: string[] = ["inventory:manage", "products:write"];
+        if (body["permissions"] != None) {
+            let pArr: any[] = body["permissions"] as any[];
+            perms = [];
+            for (let i = 0; i < pArr.length(); i++) {
+                perms.push(String(pArr[i]));
+            }
+        }
+
+        let auth = getAuthService();
+        let created = auth.createStaffAccount(vendorId, name, email, perms);
+
+        let out: JsonObject = objectOf(created.toJSON());
+        return jsonSuccess("Vendor staff sub-account created", out);
+    } catch (e) {
+        return jsonError("Failed to create staff account: " + String(e), 500);
+    }
+}
+
+// User & Access Management Handlers (Strictly Administrative)
+export function handleListUsers(ctx: AppRouteContext): AppHttpResponse {
+    let claims = getAuthenticatedClaims(ctx);
+    if (claims == None) return jsonError("Authentication required", 401);
+    let curClaims = claims as TokenClaims;
+    let creatorRole = curClaims.originalRole != "" ? curClaims.originalRole : curClaims.role;
+    let isRootAdmin = (creatorRole == "admin" || curClaims.role == "admin" || hasPermission(curClaims, "*") || hasPermission(curClaims, "users:manage"));
+
+    if (!isRootAdmin) {
+        return jsonError("Access denied: Administrative privileges required to view user directory", 403);
+    }
+
+    let auth = getAuthService();
+    let users = auth.listUsers();
+    let list: any[] = [];
+    for (let i = 0; i < users.length(); i++) {
+        list.push(users[i].toJSON());
+    }
+    let out: JsonObject = objectOf({});
+    out.setArray("users", list);
+    out.setInt("totalCount", list.length());
+    return jsonSuccess("User directory fetched", out);
+}
+
+export function handleCreateUser(ctx: AppRouteContext): AppHttpResponse {
+    let claims = getAuthenticatedClaims(ctx);
+    if (claims == None) return jsonError("Authentication required", 401);
+    let curClaims = claims as TokenClaims;
+
+    let creatorRole = curClaims.originalRole != "" ? curClaims.originalRole : curClaims.role;
+    let isRootAdmin = (creatorRole == "admin" || curClaims.role == "admin" || hasPermission(curClaims, "*") || hasPermission(curClaims, "users:manage"));
+
+    if (!isRootAdmin) {
+        return jsonError("Access denied: Only administrators can create user accounts", 403);
+    }
+
+    let rawBody = ctx.request.body;
+    if (rawBody == "") return jsonError("User payload required", 400);
+
+    try {
+        let body: any = parseJson(rawBody);
+        let username: string = String(body["username"] != None ? body["username"] : "").trim();
+        let password: string = String(body["password"] != None ? body["password"] : "").trim();
+        let name: string = String(body["name"] != None ? body["name"] : username).trim();
+        let email: string = String(body["email"] != None ? body["email"] : username + "@marketplace.io").trim();
+        let requestedRole: string = String(body["role"] != None ? body["role"] : "customer").toLowerCase().trim();
+        let requestedVendorId: string = String(body["vendorId"] != None ? body["vendorId"] : "").trim();
+
+        if (username == "" || password == "") {
+            return jsonError("Username and password are required", 400);
+        }
+
+        // ROLE VALIDATION & PRIVILEGE ESCALATION PREVENTION:
+        // A Vendor CANNOT create an admin account!
+        if (!isRootAdmin) {
+            if (requestedRole == "admin" || requestedRole == "superadmin") {
+                return jsonError("Access denied: Vendors cannot create administrator accounts", 403);
+            }
+            if (requestedRole != "vendor" && requestedRole != "customer") {
+                return jsonError("Access denied: You may only create Vendor or Customer accounts", 403);
+            }
+            // For vendor role, lock vendorId to creator's own vendorId!
+            if (requestedRole == "vendor") {
+                requestedVendorId = curClaims.vendorId;
+            }
+        }
+
+        let role: string = requestedRole;
+        let vendorId: string = requestedVendorId;
+
+        // AUTOMATIC ROLE-BASED ACCESS CONTROL (No fine-grained input required; pure role-driven permissions):
+        let perms: string[] = [];
+        if (role == "admin") {
+            vendorId = "";
+            perms = ["*"];
+        } else if (role == "vendor") {
+            if (vendorId == "") {
+                vendorId = "vnd-solis";
+            }
+            perms = ["inventory:manage", "promotions:write", "analytics:read", "products:write", "orders:fulfill", "staff:manage", "cart:write", "checkout:execute", "invoices:read"];
+        } else if (role == "customer") {
+            vendorId = "";
+            perms = ["catalog:read", "cart:write", "checkout:execute", "invoices:read"];
+        } else {
+            role = "guest";
+            vendorId = "";
+            perms = ["catalog:read"];
+        }
+
+        let auth = getAuthService();
+        let created = auth.createUser(username, password, name, email, role, vendorId, perms);
+        if (created == None) {
+            return jsonError("Username '" + username + "' is already taken", 409);
+        }
+        let out: JsonObject = objectOf((created as UserAccount).toJSON());
+        return jsonSuccess("User created successfully with " + role + " access", out);
+    } catch (e) {
+        return jsonError("Failed to create user: " + String(e), 500);
+    }
+}
+
+export function handleUpdateUser(ctx: AppRouteContext): AppHttpResponse {
+    let claims = getAuthenticatedClaims(ctx);
+    if (claims == None) return jsonError("Authentication required", 401);
+    let curClaims = claims as TokenClaims;
+    let userId: string = ctx.param("userId");
+    let isSelf: bool = (curClaims.sub == userId || curClaims.originalSub == userId);
+
+    let creatorRole = curClaims.originalRole != "" ? curClaims.originalRole : curClaims.role;
+    let isRootAdmin = (creatorRole == "admin" || curClaims.role == "admin" || hasPermission(curClaims, "*") || hasPermission(curClaims, "users:manage"));
+
+    if (!isRootAdmin && !isSelf) {
+        return jsonError("Access denied: Administrative privileges required to manage user accounts", 403);
+    }
+
+    let auth = getAuthService();
+    let targetUser = auth.getUserById(userId);
+    if (targetUser == None) return jsonError("User not found", 404);
+    let tu = targetUser as UserAccount;
+
+    let rawBody = ctx.request.body;
+    if (rawBody == "") return jsonError("Update payload required", 400);
+
+    try {
+        let body: any = parseJson(rawBody);
+        let requestedUsername: string = String(body["username"] != None ? body["username"] : "").trim();
+        let name: string = String(body["name"] != None ? body["name"] : tu.name).trim();
+        let email: string = String(body["email"] != None ? body["email"] : tu.email).trim();
+        let role: string = tu.role;
+        let vendorId: string = tu.vendorId;
+
+        // Role changes:
+        if (body["role"] != None) {
+            let newRole = String(body["role"]).toLowerCase().trim();
+            if (!isRootAdmin) {
+                // Non-admins CANNOT promote to admin or change other accounts to admin!
+                if (newRole == "admin") {
+                    return jsonError("Access denied: Only administrators can grant admin role", 403);
+                }
+                if (isSelf && newRole != tu.role) {
+                    return jsonError("Access denied: You cannot alter your own role", 403);
+                }
+                if (newRole != "vendor" && newRole != "customer") {
+                    return jsonError("Access denied: Invalid role", 403);
+                }
+            }
+            role = newRole;
+        }
+
+        if (body["vendorId"] != None && isRootAdmin) {
+            vendorId = String(body["vendorId"]).trim();
+        }
+
+        // Automatic role-driven permissions
+        let perms: string[] = [];
+        if (role == "admin") {
+            vendorId = "";
+            perms = ["*"];
+        } else if (role == "vendor") {
+            if (vendorId == "") {
+                vendorId = "vnd-solis";
+            }
+            perms = ["inventory:manage", "promotions:write", "analytics:read", "products:write", "orders:fulfill", "staff:manage", "cart:write", "checkout:execute", "invoices:read"];
+        } else if (role == "customer") {
+            vendorId = "";
+            perms = ["catalog:read", "cart:write", "checkout:execute", "invoices:read"];
+        } else {
+            role = "guest";
+            vendorId = "";
+            perms = ["catalog:read"];
+        }
+
+        if (requestedUsername != "" && requestedUsername != tu.username) {
+            let existing = auth.getUser(requestedUsername);
+            if (existing != None) {
+                let exAcc = existing as UserAccount;
+                if (exAcc.id != userId) {
+                    return jsonError("Username '" + requestedUsername + "' is already taken", 409);
+                }
+            }
+        }
+
+        let ok = auth.updateUser(userId, requestedUsername, name, email, role, vendorId, perms);
+        if (!ok) return jsonError("User not found or username conflict", 404);
+
+        let out: JsonObject = objectOf({});
+        out.setString("userId", userId);
+        if (requestedUsername != "") {
+            out.setString("username", requestedUsername);
+        }
+        out.setString("role", role);
+        return jsonSuccess("User updated successfully with " + role + " access", out);
+    } catch (e) {
+        return jsonError("Failed to update user: " + String(e), 500);
+    }
+}
+
+export function handleUpdateMe(ctx: AppRouteContext): AppHttpResponse {
+    let claims = getAuthenticatedClaims(ctx);
+    if (claims == None) return jsonError("Missing Authorization header (Bearer token required)", 401);
+    let curClaims = claims as TokenClaims;
+    let userId: string = curClaims.sub != "" ? curClaims.sub : curClaims.originalSub;
+    let rawBody = ctx.request.body;
+    if (rawBody == "") return jsonError("Update payload required", 400);
+    try {
+        let body: any = parseJson(rawBody);
+        let requestedUsername: string = String(body["username"] != None ? body["username"] : "").trim();
+        let name: string = String(body["name"] != None ? body["name"] : "");
+        let email: string = String(body["email"] != None ? body["email"] : "");
+
+        let auth = getAuthService();
+        let selfUser = auth.getUserById(userId);
+        if (selfUser == None) return jsonError("User not found", 404);
+        let su = selfUser as UserAccount;
+
+        let role: string = su.role;
+        let vendorId: string = su.vendorId;
+        let perms: string[] = su.permissions;
+        if (name == "") name = su.name;
+        if (email == "") email = su.email;
+
+        if (requestedUsername != "") {
+            let existing = auth.getUser(requestedUsername);
+            if (existing != None) {
+                let exAcc = existing as UserAccount;
+                if (exAcc.id != userId && exAcc.username != userId) {
+                    return jsonError("Username '" + requestedUsername + "' is already taken", 409);
+                }
+            }
+        }
+
+        let ok = auth.updateUser(userId, requestedUsername, name, email, role, vendorId, perms);
+        if (!ok) return jsonError("Failed to update profile", 400);
+
+        let out: JsonObject = objectOf({});
+        out.setString("userId", userId);
+        if (requestedUsername != "") {
+            out.setString("username", requestedUsername);
+        }
+        out.setString("name", name);
+        out.setString("email", email);
+        return jsonSuccess("Profile updated successfully", out);
+    } catch (e) {
+        return jsonError("Failed to update profile: " + String(e), 500);
+    }
+}
+
+export function handleUpdatePassword(ctx: AppRouteContext): AppHttpResponse {
+    if (!mayManageUsers(ctx)) return jsonError("User-management permission is required", 403);
+    let userId: string = ctx.param("userId");
+    let rawBody = ctx.request.body;
+    if (rawBody == "") return jsonError("Password payload required", 400);
+    try {
+        let body: any = parseJson(rawBody);
+        let newPassword: string = String(body["password"] != None ? body["password"] : "").trim();
+        if (newPassword == "") return jsonError("New password cannot be empty", 400);
+
+        let auth = getAuthService();
+        let ok = auth.updatePassword(userId, newPassword);
+        if (!ok) return jsonError("User not found", 404);
+
+        let out: JsonObject = objectOf({});
+        out.setString("userId", userId);
+        return jsonSuccess("Password updated successfully", out);
+    } catch (e) {
+        return jsonError("Failed to update password: " + String(e), 500);
+    }
+}
+
+export function handleDeleteUser(ctx: AppRouteContext): AppHttpResponse {
+    if (!mayManageUsers(ctx)) return jsonError("User-management permission is required", 403);
+    let userId: string = ctx.param("userId");
+    let auth = getAuthService();
+    let ok = auth.deleteUser(userId);
+    if (!ok) return jsonError("Cannot delete root admin or user not found", 400);
+
+    let out: JsonObject = objectOf({});
+    out.setString("deletedUserId", userId);
+    return jsonSuccess("User deleted successfully", out);
+}

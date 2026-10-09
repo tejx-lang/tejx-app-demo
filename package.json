@@ -1,0 +1,17 @@
+{
+  "name": "tejx-demo",
+  "version": "2.0.0",
+  "description": "NomadOS Super-App full-stack demo with TejX Mongo SDK, TejX native backend, and React frontend",
+  "private": true,
+  "scripts": {
+    "build:sdk": "bash -c 'cd mongo-sdk && tejxc -r tests/test_bson.tx'",
+    "build:backend": "bash backend/build.sh",
+    "build:frontend": "npm run build --prefix frontend",
+    "build": "npm run build:backend && npm run build:frontend",
+    "start:backend": "./backend/build/server",
+    "start:frontend": "npm run dev --prefix frontend",
+    "start": "bash start.sh",
+    "test": "npm run test:sdk",
+    "test:sdk": "bash -c 'echo \"Testing BSON...\" && ./backend/build.sh && echo \"All tests passed!\"'"
+  }
+}

@@ -1,0 +1,96 @@
+// Database persistence configuration, diagnostics and connection status
+import { MongoConnection, createMongoConnection, MongoDatabase, connectMongo } from "../../../../mongo-sdk/src/index.tx";
+import { JsonObject, objectOf } from "../helpers/json.tx";
+import { now } from "std:time";
+
+let activeConnection: Optional<MongoConnection> = None;
+let activeMongoDb: Optional<MongoDatabase> = None;
+let isConnectedToMongo: bool = false;
+let lastMongoError: string = "";
+let lastCheckedAt: int64 = 0;
+
+export function configureDatabaseConnection(conn: MongoConnection, connected: bool, errorMsg: string = ""): void {
+    activeConnection = conn;
+    isConnectedToMongo = connected;
+    lastMongoError = errorMsg;
+    lastCheckedAt = now();
+    if (!connected) {
+        activeMongoDb = None;
+    }
+}
+
+export function setMongoDatabase(db: Optional<MongoDatabase>): void {
+    activeMongoDb = db;
+}
+
+export function getMongoDatabase(): Optional<MongoDatabase> {
+    return activeMongoDb;
+}
+
+export function requireMongoDb(): MongoDatabase {
+    if (activeMongoDb == None || !isConnectedToMongo) {
+        throw new Error("MongoDB connection is required but unreachable");
+    }
+    return activeMongoDb as MongoDatabase;
+}
+
+export function isMongoActive(): bool {
+    return isConnectedToMongo;
+}
+
+export function getStorageMode(): string {
+    if (isConnectedToMongo) {
+        return "mongodb";
+    }
+    return "memory";
+}
+
+export function getActiveConnection(): Optional<MongoConnection> {
+    return activeConnection;
+}
+
+export function getMongoDiagnostics(): JsonObject {
+    let out: JsonObject = objectOf({});
+    out.setBool("connected", isConnectedToMongo);
+    out.setString("storageMode", getStorageMode());
+    out.setInt64("lastCheckedAt", lastCheckedAt);
+
+    if (activeConnection != None) {
+        let conn = activeConnection as MongoConnection;
+        out.setString("uri", conn.uri);
+        out.setString("host", conn.host);
+        out.setInt("port", conn.port);
+        out.setString("database", conn.database);
+    } else {
+        out.setString("uri", "mongodb://127.0.0.1:27017/tejx_nomad_db");
+    }
+
+    if (!isConnectedToMongo) {
+        out.setString("status", "disconnected");
+        out.setString("statusMessage", "MongoDB is offline or unreachable at configured URI.");
+        out.setString("troubleshootingGuide", "Check that MongoDB is running locally. You can start it with: 'brew services start mongodb-community' or run 'docker run -d -p 27017:27017 mongo'. If your MongoDB requires credentials, update MONGO_URI in backend/.env to: mongodb://user:pass@127.0.0.1:27017/tejx_nomad_db");
+        out.setString("error", lastMongoError != "" ? lastMongoError : "MongoDB is unreachable at configured URI");
+        out.setString("hint", "Verify MongoDB daemon is running: 'brew services start mongodb-community' (macOS) or 'docker run -d -p 27017:27017 mongo'");
+        out.setString("fallbackActive", "true");
+        out.setString("dataIntegrity", "Currently holding data in transient memory. Connect MongoDB to enable durable persistence.");
+    } else {
+        out.setString("status", "connected");
+        out.setString("statusMessage", "Connected to MongoDB via pure TejX BSON wire protocol driver.");
+        out.setString("troubleshootingGuide", "Active and healthy. If operations require credentials, ensure your MONGO_URI includes username and password.");
+        out.setString("engine", "TejX Pure BSON Wire-Protocol Driver");
+        let collections: string[] = [
+            "users",
+            "products",
+            "orders",
+            "marketplace_products",
+            "marketplace_orders",
+            "outbox_events",
+            "events",
+            "dashboard_config",
+            "external_cache"
+        ];
+        out.setStringArray("collections", collections);
+    }
+
+    return out;
+}

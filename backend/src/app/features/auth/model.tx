@@ -1,0 +1,145 @@
+// IAM & Access Control Data Models
+import { JsonObject, objectOf } from "../../helpers/json.tx";
+
+export class UserAccount {
+    id: string;
+    username: string;
+    passwordHash: string;
+    name: string;
+    email: string;
+    role: string; // "admin" | "vendor" | "customer"
+    vendorId: string;
+    permissions: string[];
+    createdAt: int64;
+
+    constructor(
+        id: string,
+        username: string,
+        passwordHash: string,
+        name: string,
+        email: string,
+        role: string,
+        vendorId: string,
+        permissions: string[],
+        createdAt: int64
+    ) {
+        this.id = id;
+        this.username = username;
+        this.passwordHash = passwordHash;
+        this.name = name;
+        this.email = email;
+        this.role = role;
+        this.vendorId = vendorId;
+        this.permissions = permissions;
+        this.createdAt = createdAt;
+    }
+
+    toJSON(): any {
+        let out: JsonObject = objectOf({});
+        out.setString("id", this.id);
+        out.setString("username", this.username);
+        out.setString("name", this.name);
+        out.setString("email", this.email);
+        out.setString("role", this.role);
+        out.setString("vendorId", this.vendorId);
+        out.setStringArray("permissions", this.permissions);
+        out.setInt64("createdAt", this.createdAt);
+        return out.toJSON();
+    }
+}
+
+export class StaffAccount {
+    id: string;
+    vendorId: string;
+    name: string;
+    email: string;
+    permissions: string[];
+    createdAt: int64;
+
+    constructor(
+        id: string,
+        vendorId: string,
+        name: string,
+        email: string,
+        permissions: string[],
+        createdAt: int64
+    ) {
+        this.id = id;
+        this.vendorId = vendorId;
+        this.name = name;
+        this.email = email;
+        this.permissions = permissions;
+        this.createdAt = createdAt;
+    }
+
+    toJSON(): any {
+        let out: JsonObject = objectOf({});
+        out.setString("id", this.id);
+        out.setString("vendorId", this.vendorId);
+        out.setString("name", this.name);
+        out.setString("email", this.email);
+        out.setStringArray("permissions", this.permissions);
+        out.setInt64("createdAt", this.createdAt);
+        return out.toJSON();
+    }
+}
+
+export class TokenClaims {
+    sub: string;
+    name: string;
+    email: string;
+    role: string; // "guest" | "customer" | "vendor" | "admin"
+    vendorId: string;
+    permissions: string[];
+    iat: int64;
+    exp: int64;
+    originalRole: string;
+    originalSub: string;
+    originalName: string;
+    originalVendorId: string;
+
+    constructor(
+        sub: string,
+        name: string,
+        email: string,
+        role: string,
+        vendorId: string,
+        permissions: string[],
+        iat: int64,
+        exp: int64,
+        originalRole: string = "",
+        originalSub: string = "",
+        originalName: string = "",
+        originalVendorId: string = ""
+    ) {
+        this.sub = sub;
+        this.name = name;
+        this.email = email;
+        this.role = role;
+        this.vendorId = vendorId;
+        this.permissions = permissions;
+        this.iat = iat;
+        this.exp = exp;
+        this.originalRole = originalRole != "" ? originalRole : role;
+        this.originalSub = originalSub != "" ? originalSub : sub;
+        this.originalName = originalName != "" ? originalName : name;
+        this.originalVendorId = originalVendorId != "" ? originalVendorId : vendorId;
+    }
+
+    toJSON(): any {
+        let out: JsonObject = objectOf({});
+        out.setString("sub", this.sub);
+        out.setString("name", this.name);
+        out.setString("email", this.email);
+        out.setString("role", this.role);
+        out.setString("vendorId", this.vendorId);
+        out.setStringArray("permissions", this.permissions);
+        out.setInt64("iat", this.iat);
+        out.setInt64("exp", this.exp);
+        out.setString("originalRole", this.originalRole);
+        out.setString("originalSub", this.originalSub);
+        out.setString("originalName", this.originalName);
+        out.setString("originalVendorId", this.originalVendorId);
+        return out.toJSON();
+    }
+}
