@@ -144,6 +144,29 @@ function buildAuthProfile(payload: AuthResponse, token: string): AuthProfile | n
 // 1. Identity, Security & Access Control (IAM)
 // ==========================================
 
+export async function startGuestSession(): Promise<{ success: boolean; data?: AuthProfile; error?: string }> {
+  try {
+    const res = await fetch(backendUrl('/api/auth/login'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ role: 'guest' })
+    });
+    const json = await readAuthResponse(res);
+    const token = typeof json.token === 'string' ? json.token : '';
+    if (!res.ok || !token) {
+      return { success: false, error: responseError(json, 'Failed to initialize guest session') };
+    }
+    const profile = buildAuthProfile(json, token);
+    if (!profile) return { success: false, error: 'Authentication service returned an invalid session' };
+    setStoredToken(token);
+    return { success: true, data: profile };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Guest session network error' };
+  }
+}
+
 export async function loginAs(role: AuthRole, vendorId?: string): Promise<{ success: boolean; data?: AuthProfile; error?: string }> {
   try {
     const currentToken = getStoredToken();

@@ -21,6 +21,8 @@ import {
   getDatabaseStatus,
   fetchAuthMe,
   loginAs,
+  loginWithCredentials,
+  startGuestSession,
   revokeToken,
   clearStoredToken,
   clearOriginalToken,
@@ -45,15 +47,11 @@ function canAccessTab(profile: AuthProfile | null, tab: string): boolean {
     case "marketplace":
       return true; // Everyone can browse
     case "vendor":
-      return (
-        role === "admin" ||
-        role === "vendor" ||
-        userHasPermission(profile, "inventory:manage")
-      );
+      return role === "admin" || role === "vendor";
     case "financial":
-      return role === "admin" || userHasPermission(profile, "analytics:read");
+      return role === "admin" || role === "vendor";
     case "security":
-      return role === "admin" || userHasPermission(profile, "users:manage");
+      return role === "admin";
     default:
       return false;
   }
@@ -159,7 +157,7 @@ export const App: React.FC = () => {
     }
   }, []);
 
-  // Initial auth check — show LoginModal if not authenticated
+  // Initial auth check
   useEffect(() => {
     const init = async () => {
       const token = getStoredToken();
@@ -168,16 +166,70 @@ export const App: React.FC = () => {
         const auth = await fetchAuthMe();
         if (auth.success && auth.data) {
           setCurrentProfile(auth.data);
-          setIsAuthenticated(true);
+          setIsAuthenticated(
+            auth.data.role !== "guest" ||
+              (Boolean(auth.data.originalRole) &&
+                auth.data.originalRole !== "guest"),
+          );
           setAuthChecked(true);
           checkStatus();
           return;
         }
         clearStoredToken();
       }
-      // No valid token — show login
+
+      // No valid token: smoothly start anonymous guest session
+      try {
+        const guestRes = await startGuestSession();
+        if (guestRes.success && guestRes.data) {
+          setCurrentProfile(guestRes.data);
+        } else {
+          setCurrentProfile({
+            token: "",
+            tokenType: "Bearer",
+            sub: "usr-guest-local",
+            username: "guest",
+            name: "Anonymous Guest",
+            email: "guest@marketplace.io",
+            role: "guest",
+            originalRole: "guest",
+            originalSub: "",
+            originalName: "",
+            vendorId: "",
+            permissions: ["catalog:read"],
+            keyType: "Local",
+          });
+        }
+      } catch {
+        setCurrentProfile({
+          token: "",
+          tokenType: "Bearer",
+          sub: "usr-guest-local",
+          username: "guest",
+          name: "Anonymous Guest",
+          email: "guest@marketplace.io",
+          role: "guest",
+          originalRole: "guest",
+          originalSub: "",
+          originalName: "",
+          vendorId: "",
+          permissions: ["catalog:read"],
+          keyType: "Local",
+        });
+      }
+
+      setIsAuthenticated(false);
       setAuthChecked(true);
-      setIsLoginModalOpen(true);
+      checkStatus();
+
+      // Only open login modal if user specifically navigated to /login or requested it via query
+      if (
+        typeof window !== "undefined" &&
+        (window.location.search.includes("login=true") ||
+          window.location.pathname === "/login")
+      ) {
+        setIsLoginModalOpen(true);
+      }
     };
     init();
   }, [checkStatus]);
@@ -196,7 +248,10 @@ export const App: React.FC = () => {
 
   const handleLoginSuccess = (profile: AuthProfile) => {
     setCurrentProfile(profile);
-    setIsAuthenticated(true);
+    setIsAuthenticated(
+      profile.role !== "guest" ||
+        (Boolean(profile.originalRole) && profile.originalRole !== "guest"),
+    );
     setSessionError(null);
     setIsLoginModalOpen(false);
     checkStatus();
@@ -206,23 +261,63 @@ export const App: React.FC = () => {
     try {
       await revokeToken();
     } catch {
-      clearStoredToken();
-      clearOriginalToken();
+      // ignore
     }
     clearStoredToken();
     clearOriginalToken();
-    setCurrentProfile(null);
+
+    // Start clean guest session immediately
+    try {
+      const guestRes = await startGuestSession();
+      if (guestRes.success && guestRes.data) {
+        setCurrentProfile(guestRes.data);
+      } else {
+        setCurrentProfile({
+          token: "",
+          tokenType: "Bearer",
+          sub: "usr-guest-local",
+          username: "guest",
+          name: "Anonymous Guest",
+          email: "guest@marketplace.io",
+          role: "guest",
+          originalRole: "guest",
+          originalSub: "",
+          originalName: "",
+          vendorId: "",
+          permissions: ["catalog:read"],
+          keyType: "Local",
+        });
+      }
+    } catch {
+      setCurrentProfile(null);
+    }
+
     setIsAuthenticated(false);
     handleTabClick("marketplace");
-    setIsLoginModalOpen(true);
+    setIsLoginModalOpen(false);
   };
 
   const handleQuickRoleChange = async (
     role: "guest" | "customer" | "vendor" | "admin",
     vendorId?: string,
   ) => {
-    if (role === "guest") {
-      await handleSignOut();
+    // If already active with same vendorId, do nothing
+    if (
+      currentProfile?.role === role &&
+      (!vendorId || currentProfile.vendorId === vendorId)
+    ) {
+      return;
+    }
+
+    const isAnonymousGuest =
+      !currentProfile ||
+      (currentProfile.role === "guest" &&
+        (!currentProfile.originalRole ||
+          currentProfile.originalRole === "guest"));
+
+    // If an anonymous guest selects a privileged role, open the login modal for credentials
+    if (isAnonymousGuest && role !== "guest") {
+      setIsLoginModalOpen(true);
       return;
     }
 
@@ -236,7 +331,10 @@ export const App: React.FC = () => {
     }
 
     setCurrentProfile(res.data);
-    setIsAuthenticated(true);
+    setIsAuthenticated(
+      res.data.role !== "guest" ||
+        (Boolean(res.data.originalRole) && res.data.originalRole !== "guest"),
+    );
     setSessionError(null);
     if (!canAccessTab(res.data, activeTab)) {
       handleTabClick("marketplace");
@@ -252,6 +350,7 @@ export const App: React.FC = () => {
           currentProfile={currentProfile}
           onSwitchRole={handleQuickRoleChange}
           onNavigateTab={handleTabClick}
+          onSignIn={() => setIsLoginModalOpen(true)}
         />
       );
     }
@@ -275,7 +374,7 @@ export const App: React.FC = () => {
       if (!canAccessTab(currentProfile, "financial")) {
         return renderAccessDenied(
           "Financial Analytics",
-          "You need analytics:read permission or admin access to view financial data.",
+          "You need administrator or vendor merchant role access to view analytics data.",
         );
       }
       return (
@@ -290,7 +389,7 @@ export const App: React.FC = () => {
       if (!canAccessTab(currentProfile, "security")) {
         return renderAccessDenied(
           "Security & User Management",
-          "You need users:manage permission or admin access for this section.",
+          "Administrator privileges are required for IAM and user management. Vendor and customer accounts do not have access to this section.",
         );
       }
       return (
@@ -482,24 +581,16 @@ export const App: React.FC = () => {
                 Analytics
               </button>
 
-              <button
-                onClick={() => handleTabClick("security")}
-                className={`segmented-nav-btn ${activeTab === "security" ? "active" : ""}`}
-                style={{
-                  opacity: canAccessTab(currentProfile, "security") ? 1 : 0.45,
-                  cursor: canAccessTab(currentProfile, "security")
-                    ? "pointer"
-                    : "not-allowed",
-                }}
-                title={
-                  canAccessTab(currentProfile, "security")
-                    ? "Identity, Access & Security Management"
-                    : "Requires Administrator privileges"
-                }
-              >
-                <ShieldCheck size={15} />
-                Users & Security
-              </button>
+              {currentProfile?.role === "admin" && (
+                <button
+                  onClick={() => handleTabClick("security")}
+                  className={`segmented-nav-btn ${activeTab === "security" ? "active" : ""}`}
+                  title="Identity, Access & Security Management (Administrator only)"
+                >
+                  <ShieldCheck size={15} />
+                  Users & Security
+                </button>
+              )}
             </nav>
           </div>
 
@@ -538,13 +629,15 @@ export const App: React.FC = () => {
               </div>
             )}
 
+
+
             {/* User Menu Dropdown (replaces old select) */}
             <UserMenuDropdown
               currentProfile={currentProfile}
               isAuthenticated={isAuthenticated}
               onSignIn={() => setIsLoginModalOpen(true)}
               onSignOut={handleSignOut}
-              onOpenUserManagement={() => setActiveTab("security")}
+              onOpenUserManagement={() => handleTabClick("security")}
               onQuickSwitch={handleQuickRoleChange}
               hasPermission={hasPermission}
               onProfileUpdated={setCurrentProfile}
@@ -627,19 +720,14 @@ export const App: React.FC = () => {
       {/* Login Modal */}
       <LoginModal
         isOpen={isLoginModalOpen}
-        onClose={() => {
-          // If user is authenticated, allow close. If not, keep it open.
-          if (isAuthenticated) {
-            setIsLoginModalOpen(false);
-          } else {
-            // Allow guest browse by closing
-            setIsLoginModalOpen(false);
-            if (!currentProfile) {
-              handleQuickRoleChange("guest");
-            }
+        onClose={() => setIsLoginModalOpen(false)}
+        onLoginSuccess={handleLoginSuccess}
+        onGuestBrowse={() => {
+          setIsLoginModalOpen(false);
+          if (!currentProfile || currentProfile.role !== "guest") {
+            handleQuickRoleChange("guest");
           }
         }}
-        onLoginSuccess={handleLoginSuccess}
       />
     </div>
   );

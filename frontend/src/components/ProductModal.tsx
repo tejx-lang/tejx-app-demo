@@ -393,9 +393,6 @@ export const ProductModal: React.FC<ProductModalProps> = ({
                 options={storefronts.map(s => ({
                   value: s.id,
                   label: s.name,
-                  sublabel: `(${s.id})`,
-                  badge: s.tier || 'Verified',
-                  badgeColor: s.tier === 'Enterprise' ? '#6366f1' : s.tier === 'Gold' ? '#eab308' : '#10b981'
                 }))}
                 placeholder="Select Storefront..."
                 searchable={storefronts.length > 4}

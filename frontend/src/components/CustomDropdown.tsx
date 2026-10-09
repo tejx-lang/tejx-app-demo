@@ -166,12 +166,14 @@ export const CustomDropdown: React.FC<CustomDropdownProps> = ({
           )}
           {selectedOption?.badge && (
             <span
-              className="badge"
               style={{
                 fontSize: '0.675rem',
                 padding: '1px 6px',
-                background: selectedOption.badgeColor || '#eff6ff',
-                color: '#2563eb'
+                borderRadius: 4,
+                background: '#f1f5f9',
+                color: '#475569',
+                border: '1px solid #e2e8f0',
+                fontWeight: 500
               }}
             >
               {selectedOption.badge}
@@ -295,12 +297,14 @@ export const CustomDropdown: React.FC<CustomDropdownProps> = ({
                     )}
                     {opt.badge && (
                       <span
-                        className="badge"
                         style={{
                           fontSize: '0.65rem',
                           padding: '1px 5px',
-                          background: opt.badgeColor || '#eff6ff',
-                          color: '#2563eb'
+                          borderRadius: 4,
+                          background: '#f1f5f9',
+                          color: '#475569',
+                          border: '1px solid #e2e8f0',
+                          fontWeight: 500
                         }}
                       >
                         {opt.badge}

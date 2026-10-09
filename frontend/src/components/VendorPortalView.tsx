@@ -288,10 +288,10 @@ export const VendorPortalView: React.FC<VendorPortalViewProps> = ({
             (acc: number, it: any) => acc + (it.stock || 0),
             0,
           ),
-          isActive: true,
-          fulfillmentScore: 5.0,
-          ordersCount: 0,
-          imageUrl: "",
+          isListed: true,
+          rating: 5.0,
+          reviewCount: 0,
+          image: items[0].image || "",
           createdAt: Date.now(),
         };
         setEditingProduct(fallback);
@@ -521,9 +521,6 @@ export const VendorPortalView: React.FC<VendorPortalViewProps> = ({
                     options={vendors.map((v) => ({
                       value: v.id,
                       label: v.name,
-                      sublabel: `(${v.id})`,
-                      badge: v.tier || "Verified",
-                      icon: <Store size={14} color="#059669" />,
                     }))}
                     placeholder="Select Store..."
                     searchable={vendors.length > 4}
@@ -874,10 +871,10 @@ export const VendorPortalView: React.FC<VendorPortalViewProps> = ({
                     warehouses: it.warehouses || [],
                   })),
                   totalStock: totalProdStock,
-                  isActive: true,
-                  fulfillmentScore: 5.0,
-                  ordersCount: 0,
-                  imageUrl: "",
+                  isListed: true,
+                  rating: 5.0,
+                  reviewCount: 0,
+                  image: items[0].image || "",
                   createdAt: Date.now(),
                 } as MarketplaceProduct);
 

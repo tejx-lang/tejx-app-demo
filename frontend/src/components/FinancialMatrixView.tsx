@@ -189,17 +189,11 @@ export const FinancialMatrixView: React.FC<FinancialMatrixViewProps> = ({
   const storeOptions = [
     {
       value: "all",
-      label: "All Stores (Global Platform)",
-      sublabel: "Consolidated analytics",
-      badge: "Platform Wide",
-      badgeColor: "#2563eb",
+      label: "All Stores",
     },
     ...storefronts.map((sf) => ({
       value: sf.id,
       label: sf.name,
-      sublabel: sf.category || `Storefront ID: ${sf.id}`,
-      badge: sf.id,
-      badgeColor: "#7c3aed",
     })),
   ];
 

@@ -73,12 +73,14 @@ interface MarketplaceViewProps {
   onNavigateTab?: (
     tab: "marketplace" | "vendor" | "financial" | "security",
   ) => void;
+  onSignIn?: () => void;
 }
 
 export const MarketplaceView: React.FC<MarketplaceViewProps> = ({
   currentProfile,
   onSwitchRole,
   onNavigateTab,
+  onSignIn,
 }) => {
   const getInitialSubTab = (): "catalog" | "orders" => {
     if (typeof window === "undefined") return "catalog";
@@ -214,7 +216,9 @@ export const MarketplaceView: React.FC<MarketplaceViewProps> = ({
             category: selectedCategory === "all" ? undefined : selectedCategory,
             brand: selectedBrand === "all" ? undefined : selectedBrand,
           }),
-          fetchSnapshotOrders(),
+          currentProfile?.role === "guest" || !currentProfile
+            ? Promise.resolve({ orders: [], totalCount: 0 })
+            : fetchSnapshotOrders(),
           fetchStorefronts(),
         ]);
       setProducts(catData.products || []);
@@ -595,15 +599,14 @@ export const MarketplaceView: React.FC<MarketplaceViewProps> = ({
                   margin: "0 auto 16px auto",
                 }}
               >
-                You are currently browsing as an Anonymous Guest. Sign in as
-                Customer to track previous purchases and inspect snapshot
-                invoices.
+                You are currently browsing as a Guest. Sign in with your account
+                to track your purchases and inspect snapshot invoices.
               </p>
               <button
-                onClick={() => onSwitchRole && onSwitchRole("customer")}
+                onClick={() => (onSignIn ? onSignIn() : onSwitchRole && onSwitchRole("customer"))}
                 className="btn btn-primary"
               >
-                Switch to Customer Mode
+                Sign In to View Orders
               </button>
             </div>
           ) : orders.length === 0 ? (

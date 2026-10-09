@@ -8,8 +8,24 @@ import { MongoDatabase } from "../../../../../mongo-sdk/src/index.tx";
 import { MongoJsonObject } from "../../../../../mongo-sdk/src/json.tx";
 import { AppProduct } from "../products/model.tx";
 import { now } from "std:time";
+import { getAuthenticatedClaims, hasPermission } from "../auth/handler.tx";
+import { TokenClaims } from "../auth/model.tx";
+
+function isDatabaseAdmin(claims: TokenClaims): bool {
+    let rootRole = claims.originalRole != "" ? claims.originalRole : claims.role;
+    return rootRole == "admin" || claims.role == "admin" || hasPermission(claims, "*");
+}
 
 export function handleGetMongoOperations(ctx: AppRouteContext): AppHttpResponse {
+    let claimsOpt = getAuthenticatedClaims(ctx);
+    if (claimsOpt == None) {
+        return jsonError("Authentication is required", 401);
+    }
+    let claims = claimsOpt as TokenClaims;
+    if (!isDatabaseAdmin(claims)) {
+        return jsonError("Access denied: Administrative privileges required", 403);
+    }
+
     let state: AppState = getAppState();
     let out: JsonObject = objectOf({});
     out.setString("engine", "TejX Pure BSON Wire-Protocol Driver");
@@ -45,6 +61,15 @@ export function handleGetMongoOperations(ctx: AppRouteContext): AppHttpResponse 
 }
 
 export function handleExecuteMongoOperation(ctx: AppRouteContext): AppHttpResponse {
+    let claimsOpt = getAuthenticatedClaims(ctx);
+    if (claimsOpt == None) {
+        return jsonError("Authentication is required", 401);
+    }
+    let claims = claimsOpt as TokenClaims;
+    if (!isDatabaseAdmin(claims)) {
+        return jsonError("Access denied: Administrative privileges required", 403);
+    }
+
     let started: int64 = now();
     try {
         let bodyRaw = ctx.request.body;

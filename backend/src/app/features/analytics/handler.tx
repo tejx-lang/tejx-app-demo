@@ -6,14 +6,40 @@ import { JsonObject, objectOf, parseJson } from "../../helpers/json.tx";
 import { getMarketplaceStore } from "../marketplace/store.tx";
 import { SnapshotInvoice, MarketplaceProduct } from "../marketplace/model.tx";
 import { Map } from "std:collections";
+import { getAuthenticatedClaims, hasPermission } from "../auth/handler.tx";
+import { TokenClaims } from "../auth/model.tx";
+
+function isAnalyticsAuthorized(claims: TokenClaims): bool {
+    let rootRole = claims.originalRole != "" ? claims.originalRole : claims.role;
+    return rootRole == "admin" || claims.role == "admin" || claims.role == "vendor" || claims.vendorId != "" || hasPermission(claims, "*") || hasPermission(claims, "analytics:read");
+}
+
+function isAdminRole(claims: TokenClaims): bool {
+    let rootRole = claims.originalRole != "" ? claims.originalRole : claims.role;
+    return rootRole == "admin" || claims.role == "admin" || hasPermission(claims, "*");
+}
 
 // 1. Platform Financial Health Matrix (Multi-dimensional Sales Aggregation & Materialized View Cache)
 export function handleGetPlatformFinancialMatrix(ctx: AppRouteContext): AppHttpResponse {
+    let claimsOpt = getAuthenticatedClaims(ctx);
+    if (claimsOpt == None) {
+        return jsonError("Authentication is required to view financial analytics", 401);
+    }
+    let claims = claimsOpt as TokenClaims;
+    if (!isAnalyticsAuthorized(claims)) {
+        return jsonError("Access denied: You need administrator or vendor merchant role to view financial data", 403);
+    }
+
     let store = getMarketplaceStore();
     let period: string = ctx.query("period", "daily").toLowerCase();
     let vendorFilter: string = ctx.query("vendorId", "").trim();
     if (vendorFilter == "") {
         vendorFilter = ctx.query("store", "").trim();
+    }
+
+    // Role-based data isolation: Non-admin vendors are strictly restricted to their own storefront
+    if (!isAdminRole(claims)) {
+        vendorFilter = claims.vendorId;
     }
 
     let currentTime: int64 = now();
@@ -145,12 +171,27 @@ export function handleGetPlatformFinancialMatrix(ctx: AppRouteContext): AppHttpR
     return jsonSuccess("Platform Financial Health Matrix evaluated", out);
 }
 
+
 // 2. Platform Commission Ledger & Audit Trail
 export function handleGetCommissionLedger(ctx: AppRouteContext): AppHttpResponse {
+    let claimsOpt = getAuthenticatedClaims(ctx);
+    if (claimsOpt == None) {
+        return jsonError("Authentication is required to view commission ledger", 401);
+    }
+    let claims = claimsOpt as TokenClaims;
+    if (!isAnalyticsAuthorized(claims)) {
+        return jsonError("Access denied: You need administrator or vendor merchant role to view commission records", 403);
+    }
+
     let store = getMarketplaceStore();
     let vendorFilter: string = ctx.query("vendorId", "").trim();
     if (vendorFilter == "") {
         vendorFilter = ctx.query("store", "").trim();
+    }
+
+    // Role-based data isolation: Non-admin vendors are strictly restricted to their own storefront
+    if (!isAdminRole(claims)) {
+        vendorFilter = claims.vendorId;
     }
     let period: string = ctx.query("period", "all").toLowerCase();
     let currentTime: int64 = now();
@@ -206,10 +247,24 @@ export function handleGetCommissionLedger(ctx: AppRouteContext): AppHttpResponse
 
 // 3. Top-K Analytical Grouping (Rankings by Revenue and Sales Volume)
 export function handleGetTopKAnalytics(ctx: AppRouteContext): AppHttpResponse {
+    let claimsOpt = getAuthenticatedClaims(ctx);
+    if (claimsOpt == None) {
+        return jsonError("Authentication is required to view analytical rankings", 401);
+    }
+    let claims = claimsOpt as TokenClaims;
+    if (!isAnalyticsAuthorized(claims)) {
+        return jsonError("Access denied: You need administrator or vendor merchant role to view analytical rankings", 403);
+    }
+
     let store = getMarketplaceStore();
     let vendorFilter: string = ctx.query("vendorId", "").trim();
     if (vendorFilter == "") {
         vendorFilter = ctx.query("store", "").trim();
+    }
+
+    // Role-based data isolation: Non-admin vendors are strictly restricted to their own storefront
+    if (!isAdminRole(claims)) {
+        vendorFilter = claims.vendorId;
     }
     let period: string = ctx.query("period", "all").toLowerCase();
     let currentTime: int64 = now();
@@ -396,6 +451,15 @@ export function handleGetTopKAnalytics(ctx: AppRouteContext): AppHttpResponse {
 let coldArchiveSimulatedCount: int = 0;
 
 export function handleGetDataTiering(ctx: AppRouteContext): AppHttpResponse {
+    let claimsOpt = getAuthenticatedClaims(ctx);
+    if (claimsOpt == None) {
+        return jsonError("Authentication is required", 401);
+    }
+    let claims = claimsOpt as TokenClaims;
+    if (!isAdminRole(claims)) {
+        return jsonError("Access denied: Administrative privileges required for data tiering telemetry", 403);
+    }
+
     let store = getMarketplaceStore();
     let hotCount: int = store.invoices.keys().length();
 
@@ -410,6 +474,15 @@ export function handleGetDataTiering(ctx: AppRouteContext): AppHttpResponse {
 }
 
 export function handleArchiveColdData(ctx: AppRouteContext): AppHttpResponse {
+    let claimsOpt = getAuthenticatedClaims(ctx);
+    if (claimsOpt == None) {
+        return jsonError("Authentication is required", 401);
+    }
+    let claims = claimsOpt as TokenClaims;
+    if (!isAdminRole(claims)) {
+        return jsonError("Access denied: Administrative privileges required to trigger cold archival", 403);
+    }
+
     coldArchiveSimulatedCount = coldArchiveSimulatedCount + 5;
     let out: JsonObject = objectOf({});
     out.setInt("archivedCount", 5);
@@ -420,6 +493,15 @@ export function handleArchiveColdData(ctx: AppRouteContext): AppHttpResponse {
 
 // 5. Transactional Outbox & Change Stream Bus Link
 export function handleGetOutboxStream(ctx: AppRouteContext): AppHttpResponse {
+    let claimsOpt = getAuthenticatedClaims(ctx);
+    if (claimsOpt == None) {
+        return jsonError("Authentication is required", 401);
+    }
+    let claims = claimsOpt as TokenClaims;
+    if (!isAdminRole(claims)) {
+        return jsonError("Access denied: Administrative privileges required to inspect transactional outbox", 403);
+    }
+
     let store = getMarketplaceStore();
     let eventsList: any[] = [];
 
@@ -439,6 +521,15 @@ export function handleGetOutboxStream(ctx: AppRouteContext): AppHttpResponse {
 
 // 6. Adaptive Token-Bucket Rate Limiter Telemetry
 export function handleGetRateLimits(ctx: AppRouteContext): AppHttpResponse {
+    let claimsOpt = getAuthenticatedClaims(ctx);
+    if (claimsOpt == None) {
+        return jsonError("Authentication is required", 401);
+    }
+    let claims = claimsOpt as TokenClaims;
+    if (!isAdminRole(claims)) {
+        return jsonError("Access denied: Administrative privileges required to inspect rate limiter telemetry", 403);
+    }
+
     let out: JsonObject = objectOf({});
     out.setString("algorithm", "Adaptive Token-Bucket (Perimeter Defense)");
     out.setInt("bucketCapacity", 100);
@@ -453,6 +544,15 @@ export function handleGetRateLimits(ctx: AppRouteContext): AppHttpResponse {
 
 // 7. Stress Test Simulation for Zero-Overdraft Protection under Extreme Concurrency
 export function handleSimulateFlashSaleConcurrency(ctx: AppRouteContext): AppHttpResponse {
+    let claimsOpt = getAuthenticatedClaims(ctx);
+    if (claimsOpt == None) {
+        return jsonError("Authentication is required", 401);
+    }
+    let claims = claimsOpt as TokenClaims;
+    if (!isAdminRole(claims)) {
+        return jsonError("Access denied: Administrative privileges required to run concurrency simulations", 403);
+    }
+
     let store = getMarketplaceStore();
     let sku: string = ctx.query("sku", "");
     if (sku == "") {

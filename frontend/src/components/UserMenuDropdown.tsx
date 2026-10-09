@@ -3,7 +3,6 @@ import {
   LogIn,
   LogOut,
   ChevronDown,
-  Users,
   Shield,
   Store,
   ShoppingBag,
@@ -62,24 +61,36 @@ export const UserMenuDropdown: React.FC<UserMenuDropdownProps> = ({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // A user is truly logged in only if authenticated with a non-guest active role
-  const isLoggedIn = Boolean(
-    isAuthenticated && currentProfile && currentProfile.role !== "guest",
-  );
-  const isAnonymous = !isLoggedIn;
+  // Determine active and root roles accurately
+  const activeRole: "guest" | "customer" | "vendor" | "admin" =
+    (currentProfile?.role as any) || "guest";
+  const originalRole: "guest" | "customer" | "vendor" | "admin" =
+    (currentProfile?.originalRole as any) || activeRole;
 
-  const role: "guest" | "customer" | "vendor" | "admin" =
-    (isLoggedIn && (currentProfile?.role as any)) || "guest";
-  const rootRole: "guest" | "customer" | "vendor" | "admin" =
-    (isLoggedIn &&
-      ((currentProfile?.originalRole as any) ||
-        (currentProfile?.role as any))) ||
-    "guest";
+  // Has persistent account credentials / root identity
+  const hasRootAccount =
+    originalRole === "admin" ||
+    originalRole === "vendor" ||
+    originalRole === "customer";
+  const isViewingAsGuest = activeRole === "guest";
+  const isTrulyAnonymous =
+    !currentProfile || (!hasRootAccount && isViewingAsGuest);
 
-  const name = isLoggedIn && currentProfile ? currentProfile.name : "Guest";
+  // The role that dictates permissions and role switching capability
+  const rootRole: "guest" | "customer" | "vendor" | "admin" = hasRootAccount
+    ? originalRole
+    : activeRole;
+
+  const name =
+    !isTrulyAnonymous && currentProfile?.name && !isViewingAsGuest
+      ? currentProfile.name
+      : isViewingAsGuest
+        ? "Guest"
+        : "Guest Visitor";
+
   const initials =
-    isLoggedIn && currentProfile
-      ? name
+    !isTrulyAnonymous && currentProfile?.name
+      ? currentProfile.name
           .split(" ")
           .map((w) => w[0])
           .join("")
@@ -100,7 +111,8 @@ export const UserMenuDropdown: React.FC<UserMenuDropdownProps> = ({
     }
   };
 
-  const roleColor = getRoleColor(rootRole);
+  const activeRoleColor = getRoleColor(activeRole);
+  const rootRoleColor = getRoleColor(rootRole);
 
   const getRoleLabel = (r: string) => {
     switch (r) {
@@ -111,14 +123,13 @@ export const UserMenuDropdown: React.FC<UserMenuDropdownProps> = ({
       case "customer":
         return "Customer";
       default:
-        return "Logged Out";
+        return "Guest";
     }
   };
 
   const getAllowedRoles = (
     r: string,
   ): Array<"guest" | "customer" | "vendor" | "admin"> => {
-    if (!isLoggedIn) return ["guest"];
     switch (r) {
       case "admin":
         return ["admin", "vendor", "customer", "guest"];
@@ -161,7 +172,7 @@ export const UserMenuDropdown: React.FC<UserMenuDropdownProps> = ({
       role: "guest",
       icon: <Eye size={14} />,
       label: "Guest",
-      desc: "Browse only",
+      desc: "Browse only (anonymous view)",
     },
   ];
 
@@ -191,7 +202,7 @@ export const UserMenuDropdown: React.FC<UserMenuDropdownProps> = ({
         email: profileEmail.trim(),
       });
       if (res.success) {
-        setProfileSuccess("Profile & username updated successfully!");
+        setProfileSuccess("Profile updated successfully!");
         if (onProfileUpdated) {
           onProfileUpdated({
             ...currentProfile,
@@ -219,6 +230,7 @@ export const UserMenuDropdown: React.FC<UserMenuDropdownProps> = ({
       {/* Trigger Button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
+        aria-label="User Account Menu"
         style={{
           display: "flex",
           alignItems: "center",
@@ -249,15 +261,15 @@ export const UserMenuDropdown: React.FC<UserMenuDropdownProps> = ({
             width: 28,
             height: 28,
             borderRadius: "50%",
-            background: isLoggedIn
-              ? `linear-gradient(135deg, ${roleColor.bg}, ${roleColor.border})`
+            background: !isTrulyAnonymous
+              ? `linear-gradient(135deg, ${activeRoleColor.bg}, ${activeRoleColor.border})`
               : "#f1f5f9",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             fontSize: "0.65rem",
             fontWeight: 800,
-            color: isLoggedIn ? roleColor.text : "#64748b",
+            color: !isTrulyAnonymous ? activeRoleColor.text : "#64748b",
             letterSpacing: "0.03em",
             flexShrink: 0,
           }}
@@ -275,7 +287,7 @@ export const UserMenuDropdown: React.FC<UserMenuDropdownProps> = ({
               whiteSpace: "nowrap",
             }}
           >
-            {isLoggedIn
+            {!isTrulyAnonymous
               ? name.length > 16
                 ? name.slice(0, 16) + "…"
                 : name
@@ -284,11 +296,15 @@ export const UserMenuDropdown: React.FC<UserMenuDropdownProps> = ({
           <div
             style={{
               fontSize: "0.65rem",
-              color: isLoggedIn ? roleColor.text : "#94a3b8",
+              color: !isTrulyAnonymous ? activeRoleColor.text : "#94a3b8",
               fontWeight: 600,
             }}
           >
-            {isLoggedIn ? getRoleLabel(rootRole) : "Logged Out"}
+            {isViewingAsGuest
+              ? "Guest"
+              : !isTrulyAnonymous
+                ? getRoleLabel(activeRole)
+                : "Browse Mode"}
           </div>
         </div>
 
@@ -311,7 +327,7 @@ export const UserMenuDropdown: React.FC<UserMenuDropdownProps> = ({
             position: "absolute",
             top: "calc(100% + 6px)",
             right: 0,
-            minWidth: 290,
+            minWidth: 300,
             background: "#ffffff",
             borderRadius: 14,
             border: "1px solid #e2e8f0",
@@ -337,13 +353,13 @@ export const UserMenuDropdown: React.FC<UserMenuDropdownProps> = ({
                     width: 38,
                     height: 38,
                     borderRadius: "50%",
-                    background: `linear-gradient(135deg, ${roleColor.bg}, ${roleColor.border})`,
+                    background: `linear-gradient(135deg, ${activeRoleColor.bg}, ${activeRoleColor.border})`,
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
                     fontSize: "0.8rem",
                     fontWeight: 800,
-                    color: roleColor.text,
+                    color: activeRoleColor.text,
                   }}
                 >
                   {initials}
@@ -356,27 +372,15 @@ export const UserMenuDropdown: React.FC<UserMenuDropdownProps> = ({
                       color: "#0f172a",
                     }}
                   >
-                    {!isAnonymous ? name : "Guest Visitor"}
+                    {!isTrulyAnonymous
+                      ? currentProfile?.name || name
+                      : "Guest Visitor"}
                   </div>
-                  {!isAnonymous && (
-                    <div
-                      style={{
-                        fontSize: "0.725rem",
-                        fontWeight: 600,
-                        color: "#6366f1",
-                        lineHeight: 1.2,
-                        marginTop: 1,
-                        marginBottom: 1,
-                      }}
-                    >
-                      @
-                      {currentProfile?.username ||
-                        currentProfile?.sub ||
-                        "user"}
-                    </div>
-                  )}
+
                   <div style={{ fontSize: "0.75rem", color: "#64748b" }}>
-                    {!isAnonymous ? currentProfile?.email : "Browse Mode"}
+                    {!isTrulyAnonymous
+                      ? currentProfile?.email
+                      : "Catalog & Browsing Session"}
                   </div>
                 </div>
                 <span
@@ -385,21 +389,21 @@ export const UserMenuDropdown: React.FC<UserMenuDropdownProps> = ({
                     fontWeight: 700,
                     padding: "3px 8px",
                     borderRadius: 6,
-                    background: roleColor.bg,
-                    color: roleColor.text,
-                    border: `1px solid ${roleColor.border}`,
+                    background: activeRoleColor.bg,
+                    color: activeRoleColor.text,
+                    border: `1px solid ${activeRoleColor.border}`,
                     textTransform: "uppercase",
                     letterSpacing: "0.04em",
                     whiteSpace: "nowrap",
                   }}
                 >
-                  {getRoleLabel(rootRole)}
+                  {getRoleLabel(activeRole)}
                 </span>
               </div>
 
               {/* Vendor Storefront Indicator - only for native vendor accounts */}
-              {!isAnonymous &&
-                rootRole === "vendor" &&
+              {activeRole === "vendor" &&
+                rootRole !== "admin" &&
                 currentProfile?.vendorId && (
                   <div
                     style={{
@@ -423,8 +427,8 @@ export const UserMenuDropdown: React.FC<UserMenuDropdownProps> = ({
                 )}
             </div>
 
-            {/* Switch Role Section (Enabled for users with switch privileges) */}
-            {!isAnonymous && switchableItems.length > 1 && (
+            {/* Switch Role Section (For users with privileges) */}
+            {!isTrulyAnonymous && switchableItems.length > 1 && (
               <div style={{ padding: "0.5rem" }}>
                 <div
                   style={{
@@ -436,10 +440,10 @@ export const UserMenuDropdown: React.FC<UserMenuDropdownProps> = ({
                     padding: "0.25rem 0.5rem 0.35rem",
                   }}
                 >
-                  Switch Role / View
+                  Switch View / Role
                 </div>
                 {switchableItems.map((item) => {
-                  const isActive = role === item.role;
+                  const isActive = activeRole === item.role;
                   return (
                     <button
                       key={item.role}
@@ -535,9 +539,9 @@ export const UserMenuDropdown: React.FC<UserMenuDropdownProps> = ({
               style={{ height: 1, background: "#f1f5f9", margin: "0 0.5rem" }}
             />
 
-            {/* Actions: Sign In (only when anonymous) and Sign Out (when authenticated) */}
+            {/* Actions: Sign In (for guests) and Sign Out (for accounts) */}
             <div style={{ padding: "0.5rem" }}>
-              {isAnonymous && (
+              {isTrulyAnonymous ? (
                 <button
                   onClick={() => {
                     setIsOpen(false);
@@ -550,7 +554,7 @@ export const UserMenuDropdown: React.FC<UserMenuDropdownProps> = ({
                     width: "100%",
                     padding: "0.5rem 0.5rem",
                     border: "none",
-                    background: "transparent",
+                    background: "#eff6ff",
                     borderRadius: 8,
                     cursor: "pointer",
                     transition: "background 0.12s ease",
@@ -558,11 +562,11 @@ export const UserMenuDropdown: React.FC<UserMenuDropdownProps> = ({
                   }}
                   onMouseEnter={(e) => {
                     (e.currentTarget as HTMLElement).style.background =
-                      "#f1f5f9";
+                      "#dbeafe";
                   }}
                   onMouseLeave={(e) => {
                     (e.currentTarget as HTMLElement).style.background =
-                      "transparent";
+                      "#eff6ff";
                   }}
                 >
                   <div
@@ -570,8 +574,8 @@ export const UserMenuDropdown: React.FC<UserMenuDropdownProps> = ({
                       width: 28,
                       height: 28,
                       borderRadius: 7,
-                      background: "#eff6ff",
-                      color: "#2563eb",
+                      background: "#2563eb",
+                      color: "#ffffff",
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
@@ -584,79 +588,77 @@ export const UserMenuDropdown: React.FC<UserMenuDropdownProps> = ({
                     <div
                       style={{
                         fontSize: "0.8rem",
-                        fontWeight: 600,
-                        color: "#0f172a",
+                        fontWeight: 700,
+                        color: "#1e40af",
                       }}
                     >
-                      Sign In
+                      Sign In with Credentials
                     </div>
-                    <div style={{ fontSize: "0.675rem", color: "#94a3b8" }}>
-                      Authenticate with username & password
+                    <div style={{ fontSize: "0.675rem", color: "#60a5fa" }}>
+                      Authenticate with your own username & password
                     </div>
                   </div>
                 </button>
-              )}
-
-              {/* Sign Out */}
-              {!isAnonymous && onSignOut && (
-                <button
-                  onClick={() => {
-                    setIsOpen(false);
-                    onSignOut();
-                  }}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "0.6rem",
-                    width: "100%",
-                    padding: "0.5rem 0.5rem",
-                    border: "none",
-                    background: "transparent",
-                    borderRadius: 8,
-                    cursor: "pointer",
-                    transition: "background 0.12s ease",
-                    textAlign: "left",
-                    marginTop: 2,
-                  }}
-                  onMouseEnter={(e) => {
-                    (e.currentTarget as HTMLElement).style.background =
-                      "#fff1f2";
-                  }}
-                  onMouseLeave={(e) => {
-                    (e.currentTarget as HTMLElement).style.background =
-                      "transparent";
-                  }}
-                >
-                  <div
+              ) : (
+                onSignOut && (
+                  <button
+                    onClick={() => {
+                      setIsOpen(false);
+                      onSignOut();
+                    }}
                     style={{
-                      width: 28,
-                      height: 28,
-                      borderRadius: 7,
-                      background: "#fff1f2",
-                      color: "#e11d48",
                       display: "flex",
                       alignItems: "center",
-                      justifyContent: "center",
-                      flexShrink: 0,
+                      gap: "0.6rem",
+                      width: "100%",
+                      padding: "0.5rem 0.5rem",
+                      border: "none",
+                      background: "transparent",
+                      borderRadius: 8,
+                      cursor: "pointer",
+                      transition: "background 0.12s ease",
+                      textAlign: "left",
+                    }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLElement).style.background =
+                        "#fff1f2";
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLElement).style.background =
+                        "transparent";
                     }}
                   >
-                    <LogOut size={14} />
-                  </div>
-                  <div>
                     <div
                       style={{
-                        fontSize: "0.8rem",
-                        fontWeight: 600,
+                        width: 28,
+                        height: 28,
+                        borderRadius: 7,
+                        background: "#fff1f2",
                         color: "#e11d48",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        flexShrink: 0,
                       }}
                     >
-                      Sign Out
+                      <LogOut size={14} />
                     </div>
-                    <div style={{ fontSize: "0.675rem", color: "#94a3b8" }}>
-                      End current session and browse as guest
+                    <div>
+                      <div
+                        style={{
+                          fontSize: "0.8rem",
+                          fontWeight: 600,
+                          color: "#e11d48",
+                        }}
+                      >
+                        Sign Out
+                      </div>
+                      <div style={{ fontSize: "0.675rem", color: "#94a3b8" }}>
+                        End session and return to guest mode
+                      </div>
                     </div>
-                  </div>
-                </button>
+                  </button>
+                )
               )}
             </div>
           </>

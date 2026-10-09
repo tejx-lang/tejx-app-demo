@@ -29,23 +29,58 @@ class AuthService {
 
     private seedInitialUsers(): void {
         let adminUsername: string = resolveAdminUsername();
-        if (this.userAccounts.has(adminUsername)) return;
         let t: int64 = now();
-        let adminPassword: string = resolveAdminPassword();
-        let uAdmin = new UserAccount(
-            "usr-admin-1",
-            adminUsername,
-            adminPassword,
-            "Platform Super-Admin",
-            "admin@marketplace.io",
-            "admin",
-            "",
-            ["*"],
-            t
-        );
-        this.userAccounts.set(uAdmin.username, uAdmin);
-        this.userIds.push(uAdmin.username);
-        this.persistUser(uAdmin);
+        if (!this.userAccounts.has(adminUsername)) {
+            let adminPassword: string = resolveAdminPassword();
+            let uAdmin = new UserAccount(
+                "usr-admin-1",
+                adminUsername,
+                adminPassword,
+                "Platform Super-Admin",
+                "admin@marketplace.io",
+                "admin",
+                "",
+                ["*"],
+                t
+            );
+            this.userAccounts.set(uAdmin.username, uAdmin);
+            this.userIds.push(uAdmin.username);
+            this.persistUser(uAdmin);
+        }
+
+        if (!this.userAccounts.has("vendor")) {
+            let uVendor = new UserAccount(
+                "usr-vendor-1",
+                "vendor",
+                "vendor",
+                "Solis Dynamics Vendor",
+                "vendor@marketplace.io",
+                "vendor",
+                "vnd-solis",
+                ["inventory:manage", "promotions:write", "analytics:read", "products:write", "orders:fulfill", "staff:manage", "cart:write", "checkout:execute", "invoices:read"],
+                t
+            );
+            this.userAccounts.set(uVendor.username, uVendor);
+            this.userIds.push(uVendor.username);
+            this.persistUser(uVendor);
+        }
+
+        if (!this.userAccounts.has("customer")) {
+            let uCustomer = new UserAccount(
+                "usr-customer-1",
+                "customer",
+                "customer",
+                "Nova Customer",
+                "customer@marketplace.io",
+                "customer",
+                "",
+                ["catalog:read", "cart:write", "checkout:execute", "invoices:read"],
+                t
+            );
+            this.userAccounts.set(uCustomer.username, uCustomer);
+            this.userIds.push(uCustomer.username);
+            this.persistUser(uCustomer);
+        }
     }
 
     private loadUsersFromMongo(): void {

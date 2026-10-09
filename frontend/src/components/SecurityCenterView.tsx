@@ -96,12 +96,6 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
   const [newEmail, setNewEmail] = useState('');
   const [newRole, setNewRole] = useState<'admin' | 'vendor' | 'customer'>('customer');
   const [newVendorId, setNewVendorId] = useState('');
-  const [newPermissions, setNewPermissions] = useState<string[]>([
-    'catalog:read',
-    'cart:write',
-    'checkout:execute',
-    'invoices:read'
-  ]);
   const [isSubmittingUser, setIsSubmittingUser] = useState(false);
 
   // Edit User State
@@ -111,7 +105,6 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
   const [editEmail, setEditEmail] = useState('');
   const [editRole, setEditRole] = useState<'admin' | 'vendor' | 'customer'>('customer');
   const [editVendorId, setEditVendorId] = useState('');
-  const [editPermissions, setEditPermissions] = useState<string[]>([]);
 
   // Password Modal State
   const [passwordTargetUser, setPasswordTargetUser] = useState<UserAccount | null>(null);
@@ -137,20 +130,68 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
   const [forceDeleteStorefront, setForceDeleteStorefront] = useState(false);
   const [isDeletingStorefront, setIsDeletingStorefront] = useState(false);
 
-  // Permissions list
-  const allAvailablePermissions = [
-    { key: '*', label: 'All Super-Admin Access (*)', desc: 'Unrestricted root control' },
-    { key: 'catalog:read', label: 'Browse Marketplace (catalog:read)', desc: 'View products and inventory' },
-    { key: 'cart:write', label: 'Shopping Cart (cart:write)', desc: 'Add & modify cart items' },
-    { key: 'checkout:execute', label: 'Atomic Checkout (checkout:execute)', desc: 'Zero-overdraft order reservation' },
-    { key: 'invoices:read', label: 'Invoice Access (invoices:read)', desc: 'View point-in-time snapshot receipts' },
-    { key: 'inventory:manage', label: 'Manage Inventory (inventory:manage)', desc: 'Vendor portal stock control' },
-    { key: 'products:write', label: 'Create/Edit Products (products:write)', desc: 'Publish and modify listings' },
-    { key: 'orders:fulfill', label: 'Dispatch Orders (orders:fulfill)', desc: 'Fulfill customer vendor sub-orders' },
-    { key: 'promotions:write', label: 'Flash Promotions (promotions:write)', desc: 'Set flash deal pricing rules' },
-    { key: 'analytics:read', label: 'Financial Matrix (analytics:read)', desc: 'View platform GMV & cut audits' },
-    { key: 'users:manage', label: 'User Management (users:manage)', desc: 'Add/edit/delete users & passwords' }
-  ];
+  // Pure Role-Based Access Configurations (Fine-grained checklist eliminated)
+  const ROLE_ACCESS_CONFIG: Record<string, {
+    title: string;
+    badge: string;
+    badgeClass: string;
+    scope: string;
+    color: string;
+    bg: string;
+    border: string;
+    description: string;
+  }> = {
+    admin: {
+      title: 'Platform Administrator',
+      badge: 'Super-Admin (*)',
+      badgeClass: 'badge-emerald',
+      scope: 'Full Root Access (*)',
+      color: '#059669',
+      bg: '#ecfdf5',
+      border: '#a7f3d0',
+      description: 'Unrestricted root control across all tenant stores, products, orders, financial matrix, and system security.'
+    },
+    vendor: {
+      title: 'Vendor Partner Merchant',
+      badge: 'Vendor Partner',
+      badgeClass: 'badge-purple',
+      scope: 'Storefront Operations & Catalog',
+      color: '#7c3aed',
+      bg: '#f5f3ff',
+      border: '#ddd6fe',
+      description: 'Operational control for assigned storefront: publish products, update inventory stock, dispatch orders, and view store analytics.'
+    },
+    customer: {
+      title: 'Standard Shopper Customer',
+      badge: 'Standard Customer',
+      badgeClass: 'badge-blue',
+      scope: 'Marketplace Shopper & Orders',
+      color: '#2563eb',
+      bg: '#eff6ff',
+      border: '#bfdbfe',
+      description: 'Customer shopper access to browse public marketplace listings, manage personal cart, and execute checkouts.'
+    }
+  };
+
+  // Determine effective creator role and allowed roles for creating accounts
+  const creatorEffectiveRole = (
+    currentProfile?.originalRole && currentProfile.originalRole !== 'guest'
+      ? currentProfile.originalRole
+      : (currentProfile?.role || 'customer')
+  ).toLowerCase();
+
+  const isCreatorAdmin = creatorEffectiveRole === 'admin' || currentProfile?.role === 'admin';
+  const isCreatorVendor = creatorEffectiveRole === 'vendor' || currentProfile?.role === 'vendor';
+
+  // Role whitelist based on logged in user:
+  // Admin -> can create Admin, Vendor, Customer
+  // Vendor -> can ONLY create Vendor (for their storefront) or Customer (cannot create Admin)
+  // Others -> customer only
+  const allowedRoles: Array<'admin' | 'vendor' | 'customer'> = isCreatorAdmin
+    ? ['admin', 'vendor', 'customer']
+    : isCreatorVendor
+    ? ['vendor', 'customer']
+    : ['customer'];
 
   const loadData = async () => {
     setLoading(true);
@@ -162,7 +203,7 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
       setUsers(uList);
       setStorefronts(sList);
       if (sList.length > 0 && !newVendorId) {
-        setNewVendorId(sList[0].id);
+        setNewVendorId(isCreatorVendor && currentProfile?.vendorId ? currentProfile.vendorId : sList[0].id);
       }
     } finally {
       setLoading(false);
@@ -173,40 +214,25 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
     loadData();
   }, [currentProfile]);
 
+  useEffect(() => {
+    if (!allowedRoles.includes(newRole)) {
+      setNewRole(allowedRoles[0]);
+    }
+    if (isCreatorVendor && currentProfile?.vendorId) {
+      setNewVendorId(currentProfile.vendorId);
+    }
+  }, [currentProfile, isCreatorAdmin, isCreatorVendor]);
+
   const handleRolePreset = (role: 'admin' | 'vendor' | 'customer') => {
     setNewRole(role);
-    if (role === 'admin') {
-      setNewPermissions(['*']);
-      setNewVendorId('');
-    } else if (role === 'vendor') {
-      setNewPermissions([
-        'catalog:read',
-        'inventory:manage',
-        'products:write',
-        'orders:fulfill',
-        'promotions:write',
-        'analytics:read'
-      ]);
-      setNewVendorId(storefronts.length > 0 ? storefronts[0].id : '');
-    } else {
-      setNewPermissions(['catalog:read', 'cart:write', 'checkout:execute', 'invoices:read']);
-      setNewVendorId('');
-    }
-  };
-
-  const togglePermission = (perm: string, isEdit: boolean) => {
-    if (isEdit) {
-      if (editPermissions.includes(perm)) {
-        setEditPermissions(editPermissions.filter(p => p !== perm));
-      } else {
-        setEditPermissions([...editPermissions, perm]);
+    if (role === 'vendor') {
+      if (isCreatorVendor && currentProfile?.vendorId) {
+        setNewVendorId(currentProfile.vendorId);
+      } else if (!newVendorId && storefronts.length > 0) {
+        setNewVendorId(storefronts[0].id);
       }
     } else {
-      if (newPermissions.includes(perm)) {
-        setNewPermissions(newPermissions.filter(p => p !== perm));
-      } else {
-        setNewPermissions([...newPermissions, perm]);
-      }
+      setNewVendorId('');
     }
   };
 
@@ -216,18 +242,21 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
     setErrorMsg(null);
     setSuccessMsg(null);
     try {
+      const assignedVendor = newRole === 'vendor'
+        ? (isCreatorVendor ? (currentProfile?.vendorId || newVendorId.trim()) : newVendorId.trim())
+        : undefined;
+
       const res = await createUserAccount({
         username: newUsername.trim(),
         password: newPassword.trim(),
         name: newName.trim(),
         email: newEmail.trim(),
         role: newRole,
-        vendorId: newRole === 'vendor' ? newVendorId.trim() : undefined,
-        permissions: newPermissions
+        vendorId: assignedVendor
       });
 
       if (res.success) {
-        setSuccessMsg(`User account '${newUsername}' created with assigned permissions!`);
+        setSuccessMsg(`User account '${newUsername.trim()}' created successfully with ${newRole.toUpperCase()} role access!`);
         setShowAddUserForm(false);
         setNewUsername('');
         setNewPassword('');
@@ -250,8 +279,7 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
     setEditName(u.name);
     setEditEmail(u.email);
     setEditRole(u.role === 'admin' ? 'admin' : u.role === 'vendor' ? 'vendor' : 'customer');
-    setEditVendorId(u.vendorId || '');
-    setEditPermissions([...u.permissions]);
+    setEditVendorId(u.vendorId || (isCreatorVendor ? (currentProfile?.vendorId || '') : ''));
     setErrorMsg(null);
     setSuccessMsg(null);
   };
@@ -263,23 +291,28 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
     setErrorMsg(null);
     setSuccessMsg(null);
     try {
+      const assignedVendor = editRole === 'vendor'
+        ? (isCreatorVendor ? (currentProfile?.vendorId || editVendorId.trim()) : editVendorId.trim())
+        : undefined;
+
       const res = await updateUserAccount(editingUser.id, {
         username: editUsername.trim(),
         name: editName.trim(),
         email: editEmail.trim(),
         role: editRole,
-        vendorId: editRole === 'vendor' ? editVendorId.trim() : undefined,
-        permissions: editPermissions
+        vendorId: assignedVendor
       });
 
       if (res.success) {
-        setSuccessMsg(`User '${editUsername.trim()}' updated successfully!`);
+        setSuccessMsg(`User '${editUsername.trim()}' updated with ${editRole.toUpperCase()} role access!`);
         if (currentProfile && (currentProfile.sub === editingUser.id || currentProfile.name === editingUser.name)) {
           if (onProfileChange) {
             onProfileChange({
               ...currentProfile,
               name: editName.trim(),
               email: editEmail.trim(),
+              role: editRole,
+              vendorId: assignedVendor
             });
           }
         }
@@ -516,10 +549,10 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
             <div>
               <span style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-                Registered Accounts & Permission Grants
+                Registered User Accounts & Role-Based Access
               </span>
               <p style={{ fontSize: '0.775rem', color: 'var(--text-secondary)', margin: 0 }}>
-                Default super-admin is <strong>admin</strong>. Assign granular access capabilities to customize portal behavior.
+                Access capabilities are strictly determined by the assigned user role archetype.
               </p>
             </div>
             <button
@@ -547,29 +580,60 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
                 borderRadius: 12
               }}
             >
-              <h3 style={{ fontSize: '1rem', fontWeight: 800, margin: '0 0 1rem 0', color: 'var(--text-primary)' }}>
-                Create New User with Custom Granular Access
+              <h3 style={{ fontSize: '1rem', fontWeight: 800, margin: '0 0 0.25rem 0', color: 'var(--text-primary)' }}>
+                Create New User Account (Role-Based Access)
               </h3>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0 0 1rem 0' }}>
+                Access is automatically governed by the assigned user role.
+              </p>
               <form onSubmit={handleCreateUserSubmit}>
                 {/* Role Preset Quick Selection */}
                 <div style={{ marginBottom: 14 }}>
                   <label style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>
-                    Select Preset Access Archetype:
+                    Select User Role Archetype:
                   </label>
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                    {(['admin', 'vendor', 'customer'] as const).map(r => (
+                    {allowedRoles.map(r => (
                       <button
                         key={r}
                         type="button"
                         onClick={() => handleRolePreset(r)}
                         className={`segmented-nav-btn ${newRole === r ? 'active' : ''}`}
-                        style={{ padding: '6px 14px', fontSize: '0.8rem', textTransform: 'capitalize' }}
+                        style={{ padding: '6px 14px', fontSize: '0.8rem', fontWeight: 600 }}
                       >
-                        {r === 'admin' ? 'Super-Admin (* Root)' : r === 'vendor' ? 'Vendor Partner' : 'Standard Customer'}
+                        {ROLE_ACCESS_CONFIG[r]?.title || r}
                       </button>
                     ))}
                   </div>
                 </div>
+
+                {/* Role Access Scope Info Card */}
+                {ROLE_ACCESS_CONFIG[newRole] && (
+                  <div
+                    style={{
+                      padding: '12px 14px',
+                      borderRadius: 8,
+                      background: ROLE_ACCESS_CONFIG[newRole].bg,
+                      border: `1px solid ${ROLE_ACCESS_CONFIG[newRole].border}`,
+                      marginBottom: 16
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <ShieldCheck size={16} color={ROLE_ACCESS_CONFIG[newRole].color} />
+                        <strong style={{ fontSize: '0.825rem', color: ROLE_ACCESS_CONFIG[newRole].color }}>
+                          {ROLE_ACCESS_CONFIG[newRole].scope}
+                        </strong>
+                      </div>
+                      <span className={`badge ${ROLE_ACCESS_CONFIG[newRole].badgeClass}`} style={{ fontSize: '0.7rem' }}>
+                        {ROLE_ACCESS_CONFIG[newRole].badge}
+                      </span>
+                    </div>
+                    <p style={{ fontSize: '0.775rem', color: '#475569', margin: 0 }}>
+                      {ROLE_ACCESS_CONFIG[newRole].description}
+                    </p>
+                  </div>
+                )}
 
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, marginBottom: 14 }}>
                   <div>
@@ -631,60 +695,48 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
                   {newRole === 'vendor' && (
                     <div>
                       <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>
-                        Assigned Storefront Tenant ID
+                        Assigned Storefront Tenant
                       </label>
-                      <CustomDropdown
-                        value={newVendorId}
-                        onChange={val => setNewVendorId(val)}
-                        options={storefronts.map(s => ({
-                          value: s.id,
-                          label: s.name,
-                          sublabel: `(${s.id})`,
-                          badge: s.tier || 'Verified',
-                          badgeColor: s.tier === 'Enterprise' ? '#6366f1' : s.tier === 'Gold' ? '#eab308' : '#10b981'
-                        }))}
-                        placeholder="Select Storefront..."
-                        searchable={storefronts.length > 4}
-                      />
+                      {isCreatorAdmin ? (
+                        <CustomDropdown
+                          value={newVendorId}
+                          onChange={val => setNewVendorId(val)}
+                          options={storefronts.map(s => ({
+                            value: s.id,
+                            label: s.name,
+                          }))}
+                          placeholder="Select Storefront..."
+                          searchable={storefronts.length > 4}
+                        />
+                      ) : (
+                        <div
+                          style={{
+                            padding: '8px 12px',
+                            background: '#ffffff',
+                            border: '1px solid #cbd5e1',
+                            borderRadius: 6,
+                            fontSize: '0.825rem',
+                            fontWeight: 600,
+                            color: '#7c3aed',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 6
+                          }}
+                        >
+                          <Store size={14} />
+                          {currentProfile?.vendorId
+                            ? (storefronts.find(s => s.id === currentProfile.vendorId)?.name || currentProfile.vendorId)
+                            : 'Assigned Storefront'}
+                          <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 400, marginLeft: 'auto' }}>
+                            (Locked to your tenant)
+                          </span>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
 
-                {/* Granular Permissions Checklist */}
-                <div style={{ marginBottom: 16 }}>
-                  <label style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>
-                    Granular Access Permissions ({newPermissions.length} selected):
-                  </label>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 6, background: '#ffffff', padding: 12, borderRadius: 8, border: '1px solid #e2e8f0' }}>
-                    {allAvailablePermissions.map(p => (
-                      <label
-                        key={p.key}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 8,
-                          fontSize: '0.775rem',
-                          padding: '4px 6px',
-                          borderRadius: 6,
-                          background: newPermissions.includes(p.key) ? '#f0fdf4' : 'transparent',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={newPermissions.includes(p.key)}
-                          onChange={() => togglePermission(p.key, false)}
-                        />
-                        <div>
-                          <strong style={{ color: newPermissions.includes(p.key) ? '#166534' : 'var(--text-primary)' }}>{p.label}</strong>
-                          <div style={{ fontSize: '0.675rem', color: '#64748b' }}>{p.desc}</div>
-                        </div>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-
-                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 14 }}>
                   <button
                     type="button"
                     onClick={() => setShowAddUserForm(false)}
@@ -697,7 +749,7 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
                     disabled={isSubmittingUser}
                     className="btn btn-primary"
                   >
-                    {isSubmittingUser ? 'Creating...' : 'Create User Account'}
+                    {isSubmittingUser ? 'Creating...' : `Create ${newRole.charAt(0).toUpperCase() + newRole.slice(1)} Account`}
                   </button>
                 </div>
               </form>
@@ -716,9 +768,12 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
                 borderRadius: 12
               }}
             >
-              <h3 style={{ fontSize: '1rem', fontWeight: 800, margin: '0 0 1rem 0', color: '#92400e' }}>
+              <h3 style={{ fontSize: '1rem', fontWeight: 800, margin: '0 0 0.25rem 0', color: '#92400e' }}>
                 Editing User: @{editUsername || editingUser.username} ({editingUser.name})
               </h3>
+              <p style={{ fontSize: '0.775rem', color: '#78350f', margin: '0 0 1rem 0' }}>
+                Access capabilities are governed by the assigned user role.
+              </p>
               <form onSubmit={handleUpdateUserSubmit}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, marginBottom: 14 }}>
                   <div>
@@ -760,16 +815,17 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
                   </div>
                   <div>
                     <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>
-                      Role
+                      Role Archetype
                     </label>
                     <CustomDropdown
                       value={editRole}
                       onChange={val => setEditRole(val as any)}
-                      options={[
-                        { value: 'admin', label: 'Platform Admin', badge: 'Full Access', badgeColor: '#ef4444' },
-                        { value: 'vendor', label: 'Vendor Merchant', badge: 'Catalog & Sales', badgeColor: '#8b5cf6' },
-                        { value: 'customer', label: 'Customer', badge: 'Standard', badgeColor: '#3b82f6' }
-                      ]}
+                      options={allowedRoles.map(r => ({
+                        value: r,
+                        label: ROLE_ACCESS_CONFIG[r]?.title || r,
+                        badge: ROLE_ACCESS_CONFIG[r]?.badge,
+                        badgeColor: ROLE_ACCESS_CONFIG[r]?.color
+                      }))}
                       placeholder="Select Role..."
                     />
                   </div>
@@ -778,56 +834,70 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
                       <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>
                         Assigned Storefront
                       </label>
-                      <CustomDropdown
-                        value={editVendorId}
-                        onChange={val => setEditVendorId(val)}
-                        options={storefronts.map(s => ({
-                          value: s.id,
-                          label: s.name,
-                          sublabel: `(${s.id})`,
-                          badge: s.tier || 'Verified',
-                          badgeColor: s.tier === 'Enterprise' ? '#6366f1' : s.tier === 'Gold' ? '#eab308' : '#10b981'
-                        }))}
-                        placeholder="Select Storefront..."
-                        searchable={storefronts.length > 4}
-                      />
+                      {isCreatorAdmin ? (
+                        <CustomDropdown
+                          value={editVendorId}
+                          onChange={val => setEditVendorId(val)}
+                          options={storefronts.map(s => ({
+                            value: s.id,
+                            label: s.name,
+                          }))}
+                          placeholder="Select Storefront..."
+                          searchable={storefronts.length > 4}
+                        />
+                      ) : (
+                        <div
+                          style={{
+                            padding: '8px 12px',
+                            background: '#ffffff',
+                            border: '1px solid #cbd5e1',
+                            borderRadius: 6,
+                            fontSize: '0.825rem',
+                            fontWeight: 600,
+                            color: '#7c3aed',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 6
+                          }}
+                        >
+                          <Store size={14} />
+                          {editVendorId || currentProfile?.vendorId || 'Assigned Storefront'}
+                          <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 400, marginLeft: 'auto' }}>
+                            (Locked to your tenant)
+                          </span>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
 
-                {/* Edit Permissions */}
-                <div style={{ marginBottom: 16 }}>
-                  <label style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>
-                    Assigned Permissions ({editPermissions.length}):
-                  </label>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 6, background: '#ffffff', padding: 12, borderRadius: 8, border: '1px solid #fef08a' }}>
-                    {allAvailablePermissions.map(p => (
-                      <label
-                        key={p.key}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 8,
-                          fontSize: '0.775rem',
-                          padding: '4px 6px',
-                          borderRadius: 6,
-                          background: editPermissions.includes(p.key) ? '#fefce8' : 'transparent',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={editPermissions.includes(p.key)}
-                          onChange={() => togglePermission(p.key, true)}
-                        />
-                        <div>
-                          <strong>{p.label}</strong>
-                          <div style={{ fontSize: '0.675rem', color: '#64748b' }}>{p.desc}</div>
-                        </div>
-                      </label>
-                    ))}
+                {/* Role Access Scope card for Edit */}
+                {ROLE_ACCESS_CONFIG[editRole] && (
+                  <div
+                    style={{
+                      padding: '12px 14px',
+                      borderRadius: 8,
+                      background: ROLE_ACCESS_CONFIG[editRole].bg,
+                      border: `1px solid ${ROLE_ACCESS_CONFIG[editRole].border}`,
+                      marginBottom: 16
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <ShieldCheck size={16} color={ROLE_ACCESS_CONFIG[editRole].color} />
+                        <strong style={{ fontSize: '0.825rem', color: ROLE_ACCESS_CONFIG[editRole].color }}>
+                          {ROLE_ACCESS_CONFIG[editRole].scope}
+                        </strong>
+                      </div>
+                      <span className={`badge ${ROLE_ACCESS_CONFIG[editRole].badgeClass}`} style={{ fontSize: '0.7rem' }}>
+                        {ROLE_ACCESS_CONFIG[editRole].badge}
+                      </span>
+                    </div>
+                    <p style={{ fontSize: '0.775rem', color: '#475569', margin: 0 }}>
+                      {ROLE_ACCESS_CONFIG[editRole].description}
+                    </p>
                   </div>
-                </div>
+                )}
 
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                   <button type="button" onClick={() => setEditingUser(null)} className="btn btn-secondary">
@@ -884,7 +954,7 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
                   <th>User & Credentials</th>
                   <th>Role Archetype</th>
                   <th>Storefront</th>
-                  <th>Assigned Permissions</th>
+                  <th>Access Scope</th>
                   <th style={{ textAlign: 'right' }}>Actions</th>
                 </tr>
               </thead>
@@ -932,28 +1002,32 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
                       </span>
                     </td>
                     <td>
-                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', maxWidth: 380 }}>
-                        {u.permissions.map(p => (
-                          <span
-                            key={p}
-                            style={{
-                              fontSize: '0.675rem',
-                              padding: '2px 6px',
-                              borderRadius: 4,
-                              background: p === '*' ? '#fef3c7' : '#f1f5f9',
-                              color: p === '*' ? '#b45309' : '#334155',
-                              border: p === '*' ? '1px solid #fde68a' : '1px solid #e2e8f0',
-                              fontWeight: p === '*' ? 700 : 500
-                            }}
-                          >
-                            {p}
-                          </span>
-                        ))}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                          {ROLE_ACCESS_CONFIG[u.role]?.scope || `${u.role.toUpperCase()} Access`}
+                        </span>
+                        <span style={{ fontSize: '0.7rem', color: '#64748b' }}>
+                          {u.role === 'admin'
+                            ? 'Root platform & tenant administration'
+                            : u.role === 'vendor'
+                            ? 'Catalog, inventory, orders & storefront analytics'
+                            : 'Marketplace browsing, cart, checkout & invoices'}
+                        </span>
                       </div>
                     </td>
                     <td style={{ textAlign: 'right' }}>
                       <div style={{ display: 'inline-flex', gap: 6 }}>
-                    
+                        {(isCreatorAdmin || (isCreatorVendor && u.vendorId === currentProfile?.vendorId) || u.id === currentProfile?.sub) && (
+                          <button
+                            onClick={() => handleStartEdit(u)}
+                            className="btn btn-secondary"
+                            style={{ padding: '4px 8px', fontSize: '0.75rem' }}
+                            title="Edit User"
+                          >
+                            <Edit2 size={13} />
+                            Edit
+                          </button>
+                        )}
                         <button
                           onClick={() => {
                             setPasswordTargetUser(u);
@@ -966,7 +1040,7 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
                           <Key size={13} />
                           Password
                         </button>
-                        {u.username !== 'admin' && (
+                        {u.username !== 'admin' && (isCreatorAdmin || (isCreatorVendor && u.vendorId === currentProfile?.vendorId && u.id !== currentProfile?.sub)) && (
                           <button
                             onClick={() => handleDeleteUser(u)}
                             className="btn btn-danger"
@@ -1000,13 +1074,15 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
                 Manage independent seller organizations. Products, orders, and fulfillment pipelines are partitioned by Storefront Tenant ID.
               </p>
             </div>
-            <button
-              onClick={() => setShowAddStorefrontModal(true)}
-              className="btn btn-primary"
-            >
-              <PlusCircle size={15} />
-              + Add Storefront Tenant
-            </button>
+            {isCreatorAdmin && (
+              <button
+                onClick={() => setShowAddStorefrontModal(true)}
+                className="btn btn-primary"
+              >
+                <PlusCircle size={15} />
+                + Add Storefront Tenant
+              </button>
+            )}
           </div>
 
           {/* Add Storefront Modal */}
@@ -1308,26 +1384,30 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
                     </td>
                     <td style={{ textAlign: 'right' }}>
                       <div style={{ display: 'inline-flex', gap: 6 }}>
-                        <button
-                          onClick={() => handleStartEditStorefront(s)}
-                          className="btn btn-secondary"
-                          style={{ padding: '4px 8px', fontSize: '0.75rem' }}
-                          title="Edit Storefront Organization"
-                        >
-                          <Edit2 size={13} />
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => {
-                            setDeletingStorefront(s);
-                            setForceDeleteStorefront(false);
-                          }}
-                          className="btn btn-danger"
-                          style={{ padding: '4px 8px', fontSize: '0.75rem' }}
-                          title="Delete Storefront Tenant"
-                        >
-                          <Trash2 size={13} />
-                        </button>
+                        {(isCreatorAdmin || (isCreatorVendor && s.id === currentProfile?.vendorId)) && (
+                          <button
+                            onClick={() => handleStartEditStorefront(s)}
+                            className="btn btn-secondary"
+                            style={{ padding: '4px 8px', fontSize: '0.75rem' }}
+                            title="Edit Storefront Organization"
+                          >
+                            <Edit2 size={13} />
+                            Edit
+                          </button>
+                        )}
+                        {isCreatorAdmin && (
+                          <button
+                            onClick={() => {
+                              setDeletingStorefront(s);
+                              setForceDeleteStorefront(false);
+                            }}
+                            className="btn btn-danger"
+                            style={{ padding: '4px 8px', fontSize: '0.75rem' }}
+                            title="Delete Storefront Tenant"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
