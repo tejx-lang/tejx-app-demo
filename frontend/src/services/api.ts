@@ -551,7 +551,7 @@ export async function saveProduct(product: Partial<MarketplaceProduct>): Promise
   }
 }
 
-export async function deleteProduct(productId: string): Promise<{ success: boolean; error?: string }> {
+export async function deleteProduct(productId: string): Promise<{ success: boolean; message?: string; error?: string }> {
   try {
     const res = await fetch(backendUrl(`/api/marketplace/products/${productId}`), {
       method: 'DELETE',
@@ -559,7 +559,7 @@ export async function deleteProduct(productId: string): Promise<{ success: boole
     });
     const json = await res.json();
     if (!res.ok) return { success: false, error: json.error || 'Failed to delete product' };
-    return { success: true };
+    return { success: true, message: json.message };
   } catch (err: any) {
     return { success: false, error: err.message };
   }
@@ -575,6 +575,20 @@ export async function updateOrderFulfillment(orderId: string, status: string): P
     const json = await res.json();
     if (!res.ok) return { success: false, error: json.error || 'Failed to update order fulfillment' };
     return { success: true, data: json.data };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
+export async function deleteOrder(orderId: string): Promise<{ success: boolean; message?: string; error?: string }> {
+  try {
+    const res = await fetch(backendUrl(`/api/marketplace/orders/${orderId}`), {
+      method: 'DELETE',
+      headers: getAuthHeaders()
+    });
+    const json = await res.json();
+    if (!res.ok) return { success: false, error: json.error || 'Failed to delete order' };
+    return { success: true, message: json.message };
   } catch (err: any) {
     return { success: false, error: err.message };
   }

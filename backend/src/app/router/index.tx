@@ -35,6 +35,7 @@ import {
     handleSaveProduct,
     handleDeleteProduct,
     handleUpdateOrderFulfillment,
+    handleDeleteOrder,
     handleListVendors,
     handleCreateVendor,
     handleUpdateVendor,
@@ -115,6 +116,7 @@ export function createAppRouter(): AppHttpRouter {
     router.get("/api/marketplace/orders", handleListOrders);
     router.get("/api/marketplace/orders/:orderId", handleGetOrderDetails);
     router.post("/api/marketplace/orders/:orderId/fulfillment", handleUpdateOrderFulfillment);
+    router.deleteRoute("/api/marketplace/orders/:orderId", handleDeleteOrder);
 
     // 4. Multi-Tenant Vendor Portal & Inventory Control
     router.get("/api/vendor/storefronts", handleListVendors);

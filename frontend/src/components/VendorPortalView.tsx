@@ -356,13 +356,13 @@ export const VendorPortalView: React.FC<VendorPortalViewProps> = ({
   }, [inventory, lowStockCount]);
 
   const handleDeleteItem = async (productId: string) => {
-    if (!window.confirm("Are you sure you want to delete this product?"))
+    if (!window.confirm("Are you sure you want to permanently delete this product?"))
       return;
     try {
       const res = await deleteProduct(productId);
       if (res.success) {
-        setReplenishSuccessMsg("Product removed successfully.");
-        loadVendorData();
+        setReplenishSuccessMsg(res.message || "Product permanently deleted.");
+        await loadVendorData();
         setTimeout(() => setReplenishSuccessMsg(null), 4000);
       } else {
         alert(res.error || "Failed to remove product");

@@ -43,10 +43,16 @@ export function handleCreateProduct(ctx: AppRouteContext): AppHttpResponse {
             return jsonError("Request body required", 400);
         }
         let parsed: any = parseJson(bodyRaw);
-        let name: string = String(parsed["name"] != None ? parsed["name"] : "New Product");
-        let price: float = parsed["price"] != None ? Number.Float(parsed["price"]) : 0.0;
-        let category: string = String(parsed["category"] != None ? parsed["category"] : "General");
-        let stock: int = parsed["stock"] != None ? Number.Int(parsed["stock"]) : 10;
+        if (parsed["name"] == None || String(parsed["name"]).trim() == "") {
+            return jsonError("Product name is required", 400);
+        }
+        let name: string = String(parsed["name"]).trim();
+        if (parsed["price"] == None) {
+            return jsonError("Product price is required", 400);
+        }
+        let price: float = Number.Float(parsed["price"]);
+        let category: string = parsed["category"] != None && String(parsed["category"]).trim() != "" ? String(parsed["category"]).trim() : "General";
+        let stock: int = parsed["stock"] != None ? Number.Int(parsed["stock"]) : 0;
 
         let state: AppState = getAppState();
         let id: string = nextEntityId("prd", state.products.ids);

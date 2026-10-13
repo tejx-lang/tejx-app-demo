@@ -1,7 +1,7 @@
-// Asymmetric JWT Authentication, RBAC, Staff Permissions & Token Blacklist Service
 import { now } from "std:time";
 import { Map } from "std:collections";
 import std:binary;
+import std:crypto;
 import { base64Encode, base64Decode } from "../../../../../mongo-sdk/src/auth.tx";
 import { getMongoDatabase, isMongoActive } from "../../core/persistence.tx";
 import { MongoDatabase } from "../../../../../mongo-sdk/src/index.tx";
@@ -9,6 +9,19 @@ import { MongoJsonObject } from "../../../../../mongo-sdk/src/json.tx";
 import { parseJson, JsonObject, objectOf, plainJson } from "../../helpers/json.tx";
 import { StaffAccount, TokenClaims, UserAccount } from "./model.tx";
 import { resolveAdminPassword, resolveAdminUsername } from "../../config/env.tx";
+
+export function hashPassword(password: string): string {
+    let bytes: int[] = crypto.sha256(binary.fromString(password));
+    let digits: string = "0123456789abcdef";
+    let hex: string = "";
+    for (let i = 0; i < bytes.length(); i++) {
+        let b = bytes[i];
+        let hi = (b / 16) as int;
+        let lo = b % 16;
+        hex = hex + digits.substring(hi, hi + 1) + digits.substring(lo, lo + 1);
+    }
+    return hex;
+}
 
 class AuthService {
     blacklistedTokens: Map<string, int64>; // token -> revokedAt
@@ -29,58 +42,23 @@ class AuthService {
 
     private seedInitialUsers(): void {
         let adminUsername: string = resolveAdminUsername();
+        if (this.userAccounts.has(adminUsername)) return;
         let t: int64 = now();
-        if (!this.userAccounts.has(adminUsername)) {
-            let adminPassword: string = resolveAdminPassword();
-            let uAdmin = new UserAccount(
-                "usr-admin-1",
-                adminUsername,
-                adminPassword,
-                "Platform Super-Admin",
-                "admin@marketplace.io",
-                "admin",
-                "",
-                ["*"],
-                t
-            );
-            this.userAccounts.set(uAdmin.username, uAdmin);
-            this.userIds.push(uAdmin.username);
-            this.persistUser(uAdmin);
-        }
-
-        if (!this.userAccounts.has("vendor")) {
-            let uVendor = new UserAccount(
-                "usr-vendor-1",
-                "vendor",
-                "vendor",
-                "Solis Dynamics Vendor",
-                "vendor@marketplace.io",
-                "vendor",
-                "vnd-solis",
-                ["inventory:manage", "promotions:write", "analytics:read", "products:write", "orders:fulfill", "staff:manage", "cart:write", "checkout:execute", "invoices:read"],
-                t
-            );
-            this.userAccounts.set(uVendor.username, uVendor);
-            this.userIds.push(uVendor.username);
-            this.persistUser(uVendor);
-        }
-
-        if (!this.userAccounts.has("customer")) {
-            let uCustomer = new UserAccount(
-                "usr-customer-1",
-                "customer",
-                "customer",
-                "Nova Customer",
-                "customer@marketplace.io",
-                "customer",
-                "",
-                ["catalog:read", "cart:write", "checkout:execute", "invoices:read"],
-                t
-            );
-            this.userAccounts.set(uCustomer.username, uCustomer);
-            this.userIds.push(uCustomer.username);
-            this.persistUser(uCustomer);
-        }
+        let adminPassword: string = resolveAdminPassword();
+        let uAdmin = new UserAccount(
+            "usr-admin-1",
+            adminUsername,
+            hashPassword(adminPassword),
+            "Super-Admin",
+            "admin@marketplace.io",
+            "admin",
+            "",
+            ["*"],
+            t
+        );
+        this.userAccounts.set(uAdmin.username, uAdmin);
+        this.userIds.push(uAdmin.username);
+        this.persistUser(uAdmin);
     }
 
     private loadUsersFromMongo(): void {
@@ -305,11 +283,11 @@ class AuthService {
         return acc;
     }
 
-    authenticateUser(username: string, passwordHash: string): Optional<UserAccount> {
+    authenticateUser(username: string, password: string): Optional<UserAccount> {
         let u = this.userAccounts.get(username);
         if (u == None) return None;
         let acc = u as UserAccount;
-        if (acc.passwordHash == passwordHash) {
+        if (acc.passwordHash == hashPassword(password)) {
             return acc;
         }
         return None;
@@ -331,11 +309,12 @@ class AuthService {
         return this.userAccounts.get(username);
     }
 
-    createUser(username: string, passwordHash: string, name: string, email: string, role: string, vendorId: string, permissions: string[]): Optional<UserAccount> {
+    createUser(username: string, password: string, name: string, email: string, role: string, vendorId: string, permissions: string[]): Optional<UserAccount> {
         if (this.userAccounts.has(username)) {
             return None;
         }
         let id = "usr-" + String(this.userIds.length() + 1);
+        let passwordHash = hashPassword(password);
         let acc = new UserAccount(id, username, passwordHash, name, email, role, vendorId, permissions, now());
         this.userAccounts.set(username, acc);
         this.userIds.push(username);
@@ -403,7 +382,8 @@ class AuthService {
         return true;
     }
 
-    updatePassword(userId: string, newPasswordHash: string): bool {
+    updatePassword(userId: string, newPassword: string): bool {
+        let newPasswordHash = hashPassword(newPassword);
         for (let i = 0; i < this.userIds.length(); i++) {
             let u = this.userAccounts.get(this.userIds[i]);
             if (u != None) {

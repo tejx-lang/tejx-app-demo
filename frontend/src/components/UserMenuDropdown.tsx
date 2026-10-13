@@ -401,10 +401,9 @@ export const UserMenuDropdown: React.FC<UserMenuDropdownProps> = ({
                 </span>
               </div>
 
-              {/* Vendor Storefront Indicator - only for native vendor accounts */}
+              {/* Vendor Storefront Indicator */}
               {activeRole === "vendor" &&
-                rootRole !== "admin" &&
-                currentProfile?.vendorId && (
+                Boolean(currentProfile?.vendorId) && (
                   <div
                     style={{
                       marginTop: 8,

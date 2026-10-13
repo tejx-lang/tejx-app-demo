@@ -158,15 +158,18 @@ export function handleLogin(ctx: AppRouteContext): AppHttpResponse {
                 permissions = ["*"];
             } else if (requestedRole == "vendor") {
                 let targetVendorId: string = String(bodyObj["vendorId"] != None ? bodyObj["vendorId"] : "");
-                if (targetVendorId == "" && originalVendorId != "") {
+                let mStore = getMarketplaceStore();
+                if (targetVendorId == "" && originalVendorId != "" && mStore.vendors.has(originalVendorId)) {
                     targetVendorId = originalVendorId;
                 }
-                let mStore = getMarketplaceStore();
                 if (targetVendorId == "" && mStore.vendorIds.length() > 0) {
                     targetVendorId = mStore.vendorIds[0];
                 }
                 if (targetVendorId == "") {
-                    targetVendorId = "vnd-solis";
+                    return jsonError("No vendor storefront registered. Please create a storefront first under Users & Security.", 400);
+                }
+                if (!mStore.vendors.has(targetVendorId)) {
+                    return jsonError("Vendor storefront '" + targetVendorId + "' does not exist.", 404);
                 }
                 role = "vendor";
                 vendorId = targetVendorId;
@@ -393,7 +396,11 @@ export function handleCreateUser(ctx: AppRouteContext): AppHttpResponse {
             perms = ["*"];
         } else if (role == "vendor") {
             if (vendorId == "") {
-                vendorId = "vnd-solis";
+                return jsonError("Storefront is required for vendor accounts", 400);
+            }
+            let mStore = getMarketplaceStore();
+            if (!mStore.vendors.has(vendorId)) {
+                return jsonError("Vendor storefront '" + vendorId + "' does not exist. Please register the storefront first.", 404);
             }
             perms = ["inventory:manage", "promotions:write", "analytics:read", "products:write", "orders:fulfill", "staff:manage", "cart:write", "checkout:execute", "invoices:read"];
         } else if (role == "customer") {
@@ -476,7 +483,11 @@ export function handleUpdateUser(ctx: AppRouteContext): AppHttpResponse {
             perms = ["*"];
         } else if (role == "vendor") {
             if (vendorId == "") {
-                vendorId = "vnd-solis";
+                return jsonError("Storefront is required for vendor accounts", 400);
+            }
+            let mStore = getMarketplaceStore();
+            if (!mStore.vendors.has(vendorId)) {
+                return jsonError("Vendor storefront '" + vendorId + "' does not exist. Please register the storefront first.", 404);
             }
             perms = ["inventory:manage", "promotions:write", "analytics:read", "products:write", "orders:fulfill", "staff:manage", "cart:write", "checkout:execute", "invoices:read"];
         } else if (role == "customer") {

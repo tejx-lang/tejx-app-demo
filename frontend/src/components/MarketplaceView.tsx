@@ -351,7 +351,7 @@ export const MarketplaceView: React.FC<MarketplaceViewProps> = ({
     if (res.success) {
       if (editingProduct?.id === productId) setEditingProduct(null);
       if (viewingProduct?.id === productId) setViewingProduct(null);
-      loadData();
+      await loadData();
     } else {
       alert(res.error || "Failed to delete product");
     }

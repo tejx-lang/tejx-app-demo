@@ -148,7 +148,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
   const handleStoreChange = (vid: string) => {
     setSelectedVendorId(vid);
     const found = storefronts.find(s => s.id === vid);
-    if (found && (!brand || brand === 'Acme Labs')) {
+    if (found && !brand) {
       setBrand(found.name);
     }
   };
@@ -227,7 +227,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
       ...(initialProduct?.id ? { id: initialProduct.id } : {}),
       title: title.trim(),
       category,
-      brand: brand.trim() || 'Acme Labs',
+      brand: brand.trim() || (storefronts.find(s => s.id === effectiveVendorId)?.name || ''),
       vendorId: effectiveVendorId,
       basePrice: computedBasePrice,
       salePrice: computedSalePrice,

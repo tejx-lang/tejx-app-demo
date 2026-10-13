@@ -1124,7 +1124,7 @@ export const SecurityCenterView: React.FC<SecurityCenterViewProps> = ({
                       className="input"
                       value={storefrontId}
                       onChange={e => setStorefrontId(e.target.value)}
-                      placeholder="e.g. vnd-solaris"
+                      placeholder="e.g. vnd-store-id"
                     />
                   </div>
                   <div>
