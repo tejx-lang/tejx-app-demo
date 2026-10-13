@@ -2,7 +2,7 @@
 import { now } from "std:time";
 import { Map } from "std:collections";
 import { AppRouteContext, AppHttpResponse } from "../../../server/index.tx";
-import { jsonSuccess, jsonError } from "../../core/responses.tx";
+import { jsonSuccess, jsonError, jsonNotFound } from "../../core/responses.tx";
 import { JsonObject, objectOf, parseJson } from "../../helpers/json.tx";
 import { getMarketplaceStore } from "./store.tx";
 import { getAuthenticatedClaims, hasPermission } from "../auth/handler.tx";
@@ -29,6 +29,7 @@ function mayManageVendor(claims: TokenClaims, vendorId: string, permission: stri
 // 1. Faceted Catalog Browsing
 export function handleGetCatalog(ctx: AppRouteContext): AppHttpResponse {
     let store = getMarketplaceStore();
+    store.reloadProductsFromMongo();
     let category: string = ctx.query("category", "").toLowerCase();
     let search: string = ctx.query("search", "").toLowerCase();
     let brand: string = ctx.query("brand", "").toLowerCase();
@@ -39,6 +40,10 @@ export function handleGetCatalog(ctx: AppRouteContext): AppHttpResponse {
         let p = store.products.get(store.productIds[i]);
         if (p == None) continue;
         let prod = p as MarketplaceProduct;
+
+        if (!prod.isListed) {
+            continue;
+        }
 
         if (category != "" && prod.category.toLowerCase().indexOf(category) < 0) {
             continue;
@@ -166,7 +171,11 @@ export function handleCheckout(ctx: AppRouteContext): AppHttpResponse {
             store.appendOutbox(
                 correlationId,
                 "ORDER_REJECTED_OVERDRAFT",
-                "{\"sku\":\"" + reqSku + "\",\"requested\":" + String(reqQty) + ",\"available\":" + String(availableStock) + "}"
+                {
+                    "sku": reqSku,
+                    "requested": reqQty,
+                    "available": availableStock
+                }
             );
 
             let errObj: JsonObject = objectOf({});
@@ -272,17 +281,27 @@ export function handleCheckout(ctx: AppRouteContext): AppHttpResponse {
     store.appendOutbox(
         correlationId,
         "ORDER_CREATED",
-        "{\"orderId\":\"" + orderId + "\",\"gmv\":" + String(grossMerchandiseValue) + ",\"itemsCount\":" + String(snapshotItems.length()) + "}"
+        {
+            "orderId": orderId,
+            "gmv": grossMerchandiseValue,
+            "itemsCount": snapshotItems.length()
+        }
     );
     store.appendOutbox(
         correlationId,
         "INVENTORY_DEDUCTED",
-        "{\"orderId\":\"" + orderId + "\",\"atomicStatus\":\"COMMITTED\"}"
+        {
+            "orderId": orderId,
+            "atomicStatus": "COMMITTED"
+        }
     );
     store.appendOutbox(
         correlationId,
         "COMMISSION_SPLIT",
-        "{\"platformCommission\":" + String(totalPlatformCommission) + ",\"vendorPayout\":" + String(netVendorPayout) + "}"
+        {
+            "platformCommission": totalPlatformCommission,
+            "vendorPayout": netVendorPayout
+        }
     );
 
     let out: JsonObject = objectOf(invoice.toJSON());
@@ -292,6 +311,7 @@ export function handleCheckout(ctx: AppRouteContext): AppHttpResponse {
 // 4. Multi-Tenant Vendor Inventory Management
 export function handleGetVendorInventory(ctx: AppRouteContext): AppHttpResponse {
     let store = getMarketplaceStore();
+    store.reloadProductsFromMongo();
     let claimsOpt = getAuthenticatedClaims(ctx);
     if (claimsOpt == None) return jsonError("Authentication is required", 401);
     let claims = claimsOpt as TokenClaims;
@@ -543,6 +563,7 @@ export function handleGetFacets(ctx: AppRouteContext): AppHttpResponse {
 // 9. Point-in-Time Order Snapshots Explorer (Role Scoped Access)
 export function handleListOrders(ctx: AppRouteContext): AppHttpResponse {
     let store = getMarketplaceStore();
+    store.reloadOrdersFromMongo();
     let claimsOpt = getAuthenticatedClaims(ctx);
     if (claimsOpt == None) {
         return jsonError("Authentication is required to view orders", 401);
@@ -638,8 +659,13 @@ export function handleGetOrderDetails(ctx: AppRouteContext): AppHttpResponse {
     let claims = claimsOpt as TokenClaims;
     let invOpt = store.invoices.get(orderId);
     if (invOpt == None) {
-        return jsonError("Snapshot invoice not found for order " + orderId, 404);
+        store.reloadOrdersFromMongo();
+        invOpt = store.invoices.get(orderId);
     }
+    if (invOpt == None) {
+        return jsonNotFound("Snapshot invoice not found for order " + orderId);
+    }
+
     let inv = invOpt as SnapshotInvoice;
 
     if (!isAdmin(claims)) {
@@ -773,13 +799,11 @@ export function handleSaveProduct(ctx: AppRouteContext): AppHttpResponse {
     if (vendorId == "") {
         if (claims.role == "vendor" && claims.vendorId != "") {
             vendorId = claims.vendorId;
-        } else if (store.vendorIds.length() > 0) {
-            vendorId = store.vendorIds[0];
         }
     }
 
     if (vendorId == "") {
-        return jsonError("A valid storefront vendor ID is required. Please create a storefront first.", 400);
+        return jsonError("A valid storefront vendor ID is required. Please select or create a storefront first.", 400);
     }
 
     if (!isAdmin(claims) && !mayManageVendor(claims, vendorId, "products:write")) {
@@ -880,7 +904,7 @@ export function handleSaveProduct(ctx: AppRouteContext): AppHttpResponse {
     return jsonSuccess("New product added to marketplace catalog", out);
 }
 
-// 11. Delete Product (Audit-compliant: unlists if referenced in historical orders)
+// 11. Delete Product
 export function handleDeleteProduct(ctx: AppRouteContext): AppHttpResponse {
     let store = getMarketplaceStore();
     let claimsOpt = getAuthenticatedClaims(ctx);
@@ -894,7 +918,11 @@ export function handleDeleteProduct(ctx: AppRouteContext): AppHttpResponse {
 
     let p = store.products.get(prodId);
     if (p == None) {
-        return jsonError("Product not found", 404);
+        store.reloadProductsFromMongo();
+        p = store.products.get(prodId);
+    }
+    if (p == None) {
+        return jsonNotFound("Product not found: " + prodId);
     }
 
     let prod = p as MarketplaceProduct;
@@ -902,30 +930,9 @@ export function handleDeleteProduct(ctx: AppRouteContext): AppHttpResponse {
         return jsonError("You do not have permission to delete this product", 403);
     }
 
-    // Check if referenced in historical orders
-    let hasOrders: bool = false;
-    let invKeys = store.invoices.keys();
-    for (let i = 0; i < invKeys.length(); i++) {
-        let invOpt = store.invoices.get(invKeys[i]);
-        if (invOpt != None) {
-            let inv = invOpt as SnapshotInvoice;
-            for (let j = 0; j < inv.items.length(); j++) {
-                if (inv.items[j].productId == prodId) {
-                    hasOrders = true;
-                    break;
-                }
-            }
-        }
-        if (hasOrders) break;
-    }
-
-    if (hasOrders) {
-        prod.isListed = false;
-        store.products.set(prod.id, prod);
-        store.persistProduct(prod);
-        let out: JsonObject = objectOf({});
-        out.setString("unlistedId", prodId);
-        return jsonSuccess("Product has orders and was unlisted to preserve audit trail", out);
+    let orderCount: int = store.countOrdersForProduct(prodId);
+    if (orderCount > 0) {
+        return jsonError("Cannot delete product: Product is associated with " + String(orderCount) + " existing order(s). Products with order history cannot be deleted.", 400);
     }
 
     store.deleteProduct(prodId);
@@ -941,7 +948,8 @@ export function handleDeleteProduct(ctx: AppRouteContext): AppHttpResponse {
 
     let out: JsonObject = objectOf({});
     out.setString("deletedId", prodId);
-    return jsonSuccess("Product removed from marketplace", out);
+    out.setString("title", prod.title);
+    return jsonSuccess("Product '" + prod.title + "' (" + prodId + ") deleted successfully", out);
 }
 
 // 12. Update Order Fulfillment Status
@@ -992,11 +1000,34 @@ export function handleUpdateOrderFulfillment(ctx: AppRouteContext): AppHttpRespo
     store.appendOutbox(
         inv.correlationId,
         "ORDER_FULFILLMENT_UPDATED",
-        "{\"orderId\":\"" + orderId + "\",\"newStatus\":\"" + newStatus + "\"}"
+        {
+            "orderId": orderId,
+            "newStatus": newStatus
+        }
     );
 
     let out: JsonObject = objectOf(inv.toJSON());
     return jsonSuccess("Order fulfillment status updated to " + newStatus, out);
+}
+
+// 13. Delete Order (Admin only)
+export function handleDeleteOrder(ctx: AppRouteContext): AppHttpResponse {
+    let store = getMarketplaceStore();
+    let claimsOpt = getAuthenticatedClaims(ctx);
+    if (claimsOpt == None) return jsonError("Authentication is required", 401);
+    let claims = claimsOpt as TokenClaims;
+    if (!isAdmin(claims)) return jsonError("Only administrators can delete orders", 403);
+
+    let orderId: string = ctx.param("orderId");
+    if (orderId == "") return jsonError("Order ID is required", 400);
+
+    store.reloadOrdersFromMongo();
+    if (store.invoices.get(orderId) == None) {
+        return jsonNotFound("Order not found: " + orderId);
+    }
+
+    store.deleteOrder(orderId);
+    return jsonSuccess("Order '" + orderId + "' deleted successfully");
 }
 
 // 14. Multi-Tenant Vendor Storefronts Directory & Management
@@ -1038,7 +1069,10 @@ export function handleCreateVendor(ctx: AppRouteContext): AppHttpResponse {
     }
 
     let store = getMarketplaceStore();
-    let id: string = bodyObj["id"] != None && String(bodyObj["id"]).trim() != "" ? String(bodyObj["id"]).trim() : ("vnd-" + String(store.vendorIds.length() + 1));
+    let id: string = bodyObj["id"] != None ? String(bodyObj["id"]).trim() : "";
+    if (id == "") {
+        return jsonError("Storefront ID is required (e.g. vnd-acme)", 400);
+    }
     if (store.vendors.has(id)) {
         return jsonError("Storefront ID already exists: " + id, 409);
     }

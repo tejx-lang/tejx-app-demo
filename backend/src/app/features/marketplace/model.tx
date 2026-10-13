@@ -366,11 +366,11 @@ export class OutboxEvent {
     id: string;
     correlationId: string;
     eventType: string;
-    payload: string;
+    payload: any;
     status: string;
     timestamp: int64;
 
-    constructor(id: string, correlationId: string, eventType: string, payload: string, status: string, timestamp: int64) {
+    constructor(id: string, correlationId: string, eventType: string, payload: any, status: string, timestamp: int64) {
         this.id = id;
         this.correlationId = correlationId;
         this.eventType = eventType;

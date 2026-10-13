@@ -206,7 +206,7 @@ export interface OutboxEvent {
   id: string;
   correlationId: string;
   eventType: string;
-  payload: string;
+  payload: Record<string, any> | any;
   status: string;
   timestamp: number;
 }

@@ -618,19 +618,24 @@ export function handleSimulateFlashSaleConcurrency(ctx: AppRouteContext): AppHtt
             }
             let ordId: string = store.nextOrderId();
             successfulOrders.push(ordId);
-            let evPayload: string = "{\"simulatedOrderId\":\"" + ordId + "\",\"qty\":" + String(orderQty) + "}";
             store.appendOutbox(
                 "corr-sim-" + String(a),
                 "ORDER_CREATED",
-                evPayload
+                {
+                    "simulatedOrderId": ordId,
+                    "qty": orderQty
+                }
             );
         } else {
             rejectedAttempts = rejectedAttempts + 1;
-            let rejPayload: string = "{\"sku\":\"" + sku + "\",\"requested\":" + String(orderQty) + ",\"available\":" + String(currStock) + "}";
             store.appendOutbox(
                 "corr-sim-" + String(a),
                 "ORDER_REJECTED_OVERDRAFT",
-                rejPayload
+                {
+                    "sku": sku,
+                    "requested": orderQty,
+                    "available": currStock
+                }
             );
         }
     }
